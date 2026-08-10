@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 
 from app.api.v1.auth.routes import router as auth_router
+from app.api.v1.business_profiles.routes import router as business_profiles_router
 from app.api.v1.customers.routes import router as customers_router
 from app.api.v1.rbac.routes import router as rbac_router
 from app.api.v1.venue_owners.routes import router as venue_owners_router
@@ -11,6 +12,7 @@ router = APIRouter(prefix=settings.API_PREFIX, tags=["v1"])
 router.include_router(auth_router)
 router.include_router(customers_router)
 router.include_router(venue_owners_router)
+router.include_router(business_profiles_router)
 router.include_router(rbac_router)
 
 

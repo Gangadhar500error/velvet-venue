@@ -4,7 +4,8 @@ import { AnimatePresence, motion } from "framer-motion";
 import { Filter, RotateCcw, Save, X } from "lucide-react";
 import { Button } from "../../_components/ui/Button";
 import { BusinessProfileFilters } from "../types";
-import { cityOptions, ownerOptions } from "../data";
+import { cityOptions } from "../data";
+import type { OwnerSelectOption } from "./BusinessProfileWorkspace";
 
 interface FilterPanelProps {
   open: boolean;
@@ -15,6 +16,7 @@ interface FilterPanelProps {
   onClose: () => void;
   onSave?: () => void;
   activeCount?: number;
+  ownerOptions?: OwnerSelectOption[];
 }
 
 export function FilterPanel({
@@ -26,6 +28,7 @@ export function FilterPanel({
   onClose,
   onSave,
   activeCount = 0,
+  ownerOptions = [],
 }: FilterPanelProps) {
   return (
     <AnimatePresence initial={false}>

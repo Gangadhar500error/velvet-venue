@@ -1,28 +1,61 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft } from "lucide-react";
-import { defaultDocumentSlots } from "../data";
+import { ArrowLeft, Loader2 } from "lucide-react";
 import { BusinessProfileWorkspace } from "../components/BusinessProfileWorkspace";
-import { BusinessDocument } from "../types";
 import { Button } from "../../_components/ui/Button";
 import { PageHeader } from "../../_components/ui/PageHeader";
 import { confirmAction, notify } from "../../_components/ui/Toast";
-import { useDemoStore } from "../../store/demoStore";
+import type { BusinessDocument, BusinessProfile } from "../types";
+import {
+  deleteBusinessProfile,
+  fetchBusinessProfile,
+  mapBusinessProfileDetail,
+} from "@/lib/business-profiles";
 
 export default function ViewBusinessProfilePage() {
   const params = useParams();
   const id = params.id as string;
   const router = useRouter();
-  const business = useDemoStore((s) => s.businesses.find((b) => b.id === id || b.businessId === id));
-  const removeBusiness = useDemoStore((s) => s.removeBusiness);
-  const [documents, setDocuments] = useState<BusinessDocument[]>(() =>
-    business?.documents?.length
-      ? business.documents.map((d) => ({ ...d }))
-      : defaultDocumentSlots()
-  );
+  const [business, setBusiness] = useState<BusinessProfile | null>(null);
+  const [documents, setDocuments] = useState<BusinessDocument[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const data = await fetchBusinessProfile(id);
+        if (cancelled) return;
+        const mapped = mapBusinessProfileDetail(data);
+        setBusiness(mapped);
+        setDocuments(mapped.documents || []);
+      } catch (err) {
+        if (!cancelled) {
+          setBusiness(null);
+          setError(err instanceof Error ? err.message : "Business profile not found");
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [id]);
+
+  if (loading) {
+    return (
+      <div className="h-64 flex items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin text-[#C89B3C]" />
+      </div>
+    );
+  }
 
   if (!business) {
     return (
@@ -48,7 +81,12 @@ export default function ViewBusinessProfilePage() {
         />
         <div className="bg-white border border-[#E8EAF0] rounded-[14px] px-6 py-14 text-center">
           <p className="text-sm text-[#6B7280] mb-4">
-            No business profile exists for ID <span className="font-medium text-[#111827]">{id}</span>.
+            {error || (
+              <>
+                No business profile exists for ID{" "}
+                <span className="font-medium text-[#111827]">{id}</span>.
+              </>
+            )}
           </p>
           <Link
             href="/admin/business-profile"
@@ -63,7 +101,7 @@ export default function ViewBusinessProfilePage() {
 
   return (
     <BusinessProfileWorkspace
-      business={{ ...business, documents }}
+      business={business}
       mode="view"
       documents={documents}
       onDocumentsChange={setDocuments}
@@ -71,12 +109,16 @@ export default function ViewBusinessProfilePage() {
       onDelete={async () => {
         const ok = await confirmAction({
           title: "Delete Business Profile?",
-          message: `Are you sure you want to delete ${business.businessName}?\n\nThis action cannot be undone.`,
+          message: `Are you sure you want to delete ${business.businessName}?\n\nThis will soft-delete the business profile.`,
         });
         if (!ok) return;
-        removeBusiness(business.id);
-        notify.deleted("Business profile");
-        router.push("/admin/business-profile");
+        try {
+          await deleteBusinessProfile(business.id);
+          notify.deleted("Business profile");
+          router.push("/admin/business-profile");
+        } catch (err) {
+          notify.error(err instanceof Error ? err.message : "Delete failed");
+        }
       }}
     />
   );

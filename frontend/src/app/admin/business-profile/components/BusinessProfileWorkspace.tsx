@@ -1,7 +1,7 @@
 "use client";
 
 import type { ComponentType, ReactNode } from "react";
-import { useMemo, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import {
   Building2,
   CalendarDays,
@@ -33,20 +33,26 @@ import {
   BusinessStatus,
   VerificationStatus,
 } from "../types";
-import { cityOptions, formatDate, formatDateTime, isValidIfsc, ownerOptions } from "../data";
+import { cityOptions, formatDate, formatDateTime, isValidIfsc } from "../data";
 import { DocumentsManager } from "./DocumentsManager";
-import { useDemoStore } from "../../store/demoStore";
 import {
+  EntityLink,
+  entityHref,
   RelationCard,
-  RelatedBookingsTable,
-  RelatedVenuesTable,
+  RelationEmpty,
   ViewAllButton,
-  bookingsForBusiness,
-  venuesForBusiness,
 } from "../../_components/relations";
 import { EntityViewLayout } from "../../_components/layout/EntityViewLayout";
+import type { BusinessVenue } from "../types";
 
 type TabKey = "overview" | "documents";
+
+export type OwnerSelectOption = {
+  id: string;
+  name: string;
+  email: string;
+  phone: string;
+};
 
 interface BusinessProfileWorkspaceProps {
   business: BusinessProfile;
@@ -66,6 +72,7 @@ interface BusinessProfileWorkspaceProps {
   saving?: boolean;
   /** Breadcrumb label override (e.g. Create / Clone) */
   pageLabel?: string;
+  ownerOptions?: OwnerSelectOption[];
 }
 
 const labelCls =
@@ -90,6 +97,7 @@ export function BusinessProfileWorkspace({
   onDelete,
   saving,
   pageLabel,
+  ownerOptions = [],
 }: BusinessProfileWorkspaceProps) {
   const router = useRouter();
   const editable = (mode === "edit" || mode === "create") && !!form && !!onChange;
@@ -117,20 +125,7 @@ export function BusinessProfileWorkspace({
       .toUpperCase() || "BP";
   const crumbLabel = pageLabel || businessName || (isCreate ? "Create Business Profile" : "Business Profile");
 
-  const allBookings = useDemoStore((s) => s.bookings);
-  const allVenues = useDemoStore((s) => s.venues);
-  const relatedVenues = useMemo(() => {
-    const byBiz = venuesForBusiness(allVenues, business.businessId);
-    const byId = venuesForBusiness(allVenues, business.id);
-    const map = new Map(byBiz.concat(byId).map((v) => [v.id, v]));
-    return Array.from(map.values());
-  }, [allVenues, business.businessId, business.id]);
-  const relatedBookings = useMemo(() => {
-    const a = bookingsForBusiness(allBookings, business.businessId);
-    const b = bookingsForBusiness(allBookings, business.id);
-    const map = new Map(a.concat(b).map((x) => [x.id, x]));
-    return Array.from(map.values());
-  }, [allBookings, business.businessId, business.id]);
+  const relatedVenues = business.venues || [];
 
   const handleOwnerSelect = (ownerId: string) => {
     if (!onChange) return;
@@ -406,7 +401,7 @@ export function BusinessProfileWorkspace({
                     {/* Owner Information */}
                     <CollapsibleCard icon={UserRound} title="Owner Information" defaultOpen>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-10 gap-y-2">
-                        {editable ? (
+                        {isCreate && editable ? (
                           <SelectField
                             label="Venue Owner"
                             required
@@ -418,7 +413,10 @@ export function BusinessProfileWorkspace({
                             ]}
                           />
                         ) : (
-                          <InfoField label="Venue Owner" value={business.ownerName} />
+                          <InfoField
+                            label="Venue Owner"
+                            value={editable ? form!.ownerName : business.ownerName}
+                          />
                         )}
                         <InfoField
                           label="Owner Email"
@@ -653,7 +651,7 @@ export function BusinessProfileWorkspace({
                     defaultOpen
                     actions={<ViewAllButton href="/admin/venues" label="View All" />}
                   >
-                    <RelatedVenuesTable venues={relatedVenues} />
+                    <BusinessVenuesTable venues={relatedVenues} />
                   </RelationCard>
 
                   <RelationCard
@@ -663,7 +661,7 @@ export function BusinessProfileWorkspace({
                     defaultOpen
                     actions={<ViewAllButton href="/admin/bookings" label="View All Bookings" />}
                   >
-                    <RelatedBookingsTable bookings={relatedBookings} showCustomer />
+                    <RelationEmpty icon={CalendarDays} text="No Bookings Found" />
                   </RelationCard>
                 </>
               ) : undefined
@@ -1051,6 +1049,40 @@ function BusinessOverviewCard({
           </>
         )}
       </div>
+    </div>
+  );
+}
+
+function BusinessVenuesTable({ venues }: { venues: BusinessVenue[] }) {
+  if (venues.length === 0) {
+    return <RelationEmpty icon={LayoutGrid} text="No Venues Available" />;
+  }
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full min-w-[700px] text-sm">
+        <thead>
+          <tr className="border-b border-[#E8EAF0] text-left text-[11px] uppercase tracking-wider text-[#6B7280]">
+            {["Venue ID", "Venue Name", "Category", "City", "Status"].map((h) => (
+              <th key={h} className="pb-2.5 pr-3 font-semibold whitespace-nowrap">
+                {h}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {venues.map((v) => (
+            <tr key={v.id} className="border-b border-[#F3F4F6] last:border-0">
+              <td className="py-2.5 pr-3 whitespace-nowrap">
+                <EntityLink href={entityHref.venue(v.id)}>{v.venueId}</EntityLink>
+              </td>
+              <td className="py-2.5 pr-3 font-medium text-[#111827]">{v.name}</td>
+              <td className="py-2.5 pr-3 text-[#4B5563]">{v.category || "—"}</td>
+              <td className="py-2.5 pr-3 text-[#4B5563]">{v.city || "—"}</td>
+              <td className="py-2.5 pr-3 capitalize text-[#4B5563]">{v.status}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }

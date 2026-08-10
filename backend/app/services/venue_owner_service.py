@@ -15,6 +15,7 @@ from app.models.venue_owner import (
 from app.repositories.role_repository import RoleRepository
 from app.repositories.user_repository import UserRepository
 from app.repositories.venue_owner_repository import VenueOwnerRepository
+from app.repositories.business_profile_repository import BusinessProfileRepository
 from app.schemas.venue_owner import (
     VenueOwnerCreateRequest,
     VenueOwnerDetailResponse,
@@ -24,6 +25,7 @@ from app.schemas.venue_owner import (
     VenueOwnerOverview,
     VenueOwnerUpdateRequest,
     MessageResponse,
+    BusinessProfileSummary,
     _initials,
     _split_name,
 )
@@ -37,6 +39,7 @@ class VenueOwnerService:
         self.users = UserRepository(db)
         self.roles = RoleRepository(db)
         self.permissions = PermissionService(db)
+        self.business_profiles = BusinessProfileRepository(db)
 
     def _assert_access(self, actor: User, owner: VenueOwner) -> None:
         scope = self.permissions.get_data_scope(actor)
@@ -66,10 +69,19 @@ class VenueOwnerService:
         return None
 
     async def _compute_overview(self, owner: VenueOwner) -> VenueOwnerOverview:
-        # Business/venue/booking tables not migrated yet — return live zeros.
-        return VenueOwnerOverview(verification_status=owner.verification_status)
+        bp_count = await self.business_profiles.count_by_venue_owner(owner.id)
+        return VenueOwnerOverview(
+            business_profiles_count=bp_count,
+            venues_count=0,
+            total_bookings=0,
+            revenue=0.0,
+            pending_payments=0.0,
+            completed_events=0,
+            upcoming_events=0,
+            verification_status=owner.verification_status,
+        )
 
-    def _to_list_item(self, owner: VenueOwner) -> VenueOwnerListItem:
+    def _to_list_item(self, owner: VenueOwner, business_profiles_count: int = 0) -> VenueOwnerListItem:
         return VenueOwnerListItem(
             id=owner.id,
             owner_code=owner.owner_code,
@@ -87,7 +99,7 @@ class VenueOwnerService:
             registration_source=owner.registration_source,
             profile_image=owner.profile_image,
             created_at=owner.created_at,
-            business_profiles_count=0,
+            business_profiles_count=business_profiles_count,
             venues_count=0,
             bookings_count=0,
             revenue=0.0,
@@ -98,6 +110,7 @@ class VenueOwnerService:
         self, owner: VenueOwner, *, existed: bool = False
     ) -> VenueOwnerDetailResponse:
         overview = await self._compute_overview(owner)
+        profiles = await self.business_profiles.list_by_venue_owner(owner.id, limit=20)
         return VenueOwnerDetailResponse(
             id=owner.id,
             owner_code=owner.owner_code,
@@ -134,7 +147,16 @@ class VenueOwnerService:
             updated_by=owner.updated_by,
             initials=_initials(owner.full_name),
             overview=overview,
-            business_profiles=[],
+            business_profiles=[
+                BusinessProfileSummary(
+                    id=p.id,
+                    business_name=p.business_name,
+                    business_type=p.business_type,
+                    city=p.city,
+                    status=p.status,
+                )
+                for p in profiles
+            ],
             venues=[],
             recent_bookings=[],
             existed=existed,
@@ -259,9 +281,13 @@ class VenueOwnerService:
             page_size=page_size,
             user_id=self._scoped_user_id(actor),
         )
+        items = []
+        for owner in rows:
+            bp_count = await self.business_profiles.count_by_venue_owner(owner.id)
+            items.append(self._to_list_item(owner, business_profiles_count=bp_count))
         total_pages = max(1, math.ceil(total / page_size)) if page_size else 1
         return VenueOwnerListResponse(
-            items=[self._to_list_item(o) for o in rows],
+            items=items,
             total=total,
             page=page,
             page_size=page_size,

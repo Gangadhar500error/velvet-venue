@@ -10,6 +10,7 @@ from app.models.role import RoleName
 from app.models.user import User
 from app.repositories.role_repository import RoleRepository
 from app.repositories.user_repository import UserRepository
+from scripts.seed_business_profiles import seed_business_profiles
 from scripts.seed_customers import seed_customers
 from scripts.seed_permissions import run_rbac_seed
 from scripts.seed_venue_owners import seed_venue_owners
@@ -96,6 +97,7 @@ async def run_seed() -> None:
             await seed_users(session, roles)
             await seed_customers(session)
             await seed_venue_owners(session)
+            await seed_business_profiles(session)
             await session.commit()
             logger.info("Database seed completed successfully")
         except Exception:

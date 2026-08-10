@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   Columns3,
@@ -15,12 +15,21 @@ import { Button } from "../_components/ui/Button";
 import { FilterPanel } from "./components/FilterPanel";
 import { BusinessProfileTable, columnLabels } from "./components/BusinessProfileTable";
 import { confirmAction, notify } from "../_components/ui/Toast";
-import { useDemoStore } from "../store/demoStore";
 import {
   BusinessProfile,
   BusinessColumnKey,
   BusinessProfileFilters,
 } from "./types";
+import {
+  deleteBusinessProfile,
+  fetchBusinessProfiles,
+  filtersToParams,
+  mapBusinessProfileListItem,
+  updateBusinessProfile,
+} from "@/lib/business-profiles";
+import { fetchVenueOwners, mapVenueOwnerListItem } from "@/lib/venue-owners";
+import { PermissionGate } from "@/components/PermissionGate";
+import type { OwnerSelectOption } from "./components/BusinessProfileWorkspace";
 
 const defaultFilters: BusinessProfileFilters = {
   search: "",
@@ -49,9 +58,9 @@ const defaultColumns: Record<BusinessColumnKey, boolean> = {
 export default function BusinessProfilePage() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
-  const businesses = useDemoStore((s) => s.businesses);
-  const updateBusiness = useDemoStore((s) => s.updateBusiness);
-  const removeBusiness = useDemoStore((s) => s.removeBusiness);
+  const [businesses, setBusinesses] = useState<BusinessProfile[]>([]);
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
   const [filters, setFilters] = useState<BusinessProfileFilters>(defaultFilters);
   const [appliedFilters, setAppliedFilters] = useState<BusinessProfileFilters>(defaultFilters);
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -62,11 +71,55 @@ export default function BusinessProfilePage() {
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [visibleColumns, setVisibleColumns] = useState(defaultColumns);
   const [columnsOpen, setColumnsOpen] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [ownerOptions, setOwnerOptions] = useState<OwnerSelectOption[]>([]);
   const columnsRef = useRef<HTMLDivElement>(null);
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const loadBusinesses = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const params = filtersToParams(appliedFilters, page, pageSize, sortKey, sortDir);
+      const data = await fetchBusinessProfiles(params);
+      setBusinesses(data.items.map(mapBusinessProfileListItem));
+      setTotal(data.total);
+      setTotalPages(Math.max(1, data.total_pages));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load business profiles");
+      setBusinesses([]);
+      setTotal(0);
+      setTotalPages(1);
+    } finally {
+      setLoading(false);
+    }
+  }, [appliedFilters, page, pageSize, sortKey, sortDir]);
 
   useEffect(() => {
-    const t = setTimeout(() => setLoading(false), 600);
-    return () => clearTimeout(t);
+    loadBusinesses();
+  }, [loadBusinesses]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await fetchVenueOwners({ page: 1, page_size: 100, sort_by: "name" });
+        if (cancelled) return;
+        setOwnerOptions(
+          data.items.map(mapVenueOwnerListItem).map((o) => ({
+            id: o.id,
+            name: o.name,
+            email: o.email,
+            phone: o.phone,
+          }))
+        );
+      } catch {
+        if (!cancelled) setOwnerOptions([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -92,50 +145,7 @@ export default function BusinessProfilePage() {
     ].filter(Boolean).length;
   }, [appliedFilters]);
 
-  const filtered = useMemo(() => {
-    let list = [...businesses];
-    const f = appliedFilters;
-
-    if (f.search) {
-      const q = f.search.toLowerCase();
-      list = list.filter(
-        (b) =>
-          b.businessName.toLowerCase().includes(q) ||
-          b.businessId.toLowerCase().includes(q) ||
-          b.ownerName.toLowerCase().includes(q) ||
-          b.city.toLowerCase().includes(q) ||
-          b.gstNumber.toLowerCase().includes(q)
-      );
-    }
-    if (f.status) list = list.filter((b) => b.status === f.status);
-    if (f.verification) list = list.filter((b) => b.verification === f.verification);
-    if (f.businessType) list = list.filter((b) => b.businessType === f.businessType);
-    if (f.city) list = list.filter((b) => b.city === f.city);
-    if (f.owner) list = list.filter((b) => b.ownerId === f.owner);
-    if (f.dateFrom) list = list.filter((b) => b.createdAt >= f.dateFrom);
-    if (f.dateTo) list = list.filter((b) => b.createdAt <= f.dateTo);
-
-    list.sort((a, b) => {
-      const av = a[sortKey as keyof BusinessProfile];
-      const bv = b[sortKey as keyof BusinessProfile];
-      if (typeof av === "number" && typeof bv === "number") {
-        return sortDir === "asc" ? av - bv : bv - av;
-      }
-      return sortDir === "asc"
-        ? String(av).localeCompare(String(bv))
-        : String(bv).localeCompare(String(av));
-    });
-
-    return list;
-  }, [businesses, appliedFilters, sortKey, sortDir]);
-
-  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const startIndex = (page - 1) * pageSize;
-  const pageItems = filtered.slice(startIndex, startIndex + pageSize);
-
-  useEffect(() => {
-    setPage(1);
-  }, [appliedFilters, pageSize]);
 
   const handleSort = (key: string) => {
     if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
@@ -143,6 +153,7 @@ export default function BusinessProfilePage() {
       setSortKey(key);
       setSortDir("asc");
     }
+    setPage(1);
   };
 
   const toggleSelect = (id: string) => {
@@ -152,8 +163,8 @@ export default function BusinessProfilePage() {
   };
 
   const toggleSelectAll = () => {
-    if (selectedIds.length === pageItems.length) setSelectedIds([]);
-    else setSelectedIds(pageItems.map((b) => b.id));
+    if (selectedIds.length === businesses.length) setSelectedIds([]);
+    else setSelectedIds(businesses.map((b) => b.id));
   };
 
   const goCreate = () => router.push("/admin/business-profile/create");
@@ -163,30 +174,37 @@ export default function BusinessProfilePage() {
   const handleDelete = async (business: BusinessProfile) => {
     const ok = await confirmAction({
       title: "Delete Business Profile?",
-      message: `Are you sure you want to delete ${business.businessName}?\n\nThis action cannot be undone.`,
+      message: `Are you sure you want to delete ${business.businessName}?\n\nThis will soft-delete the business profile.`,
     });
     if (!ok) return;
-    removeBusiness(business.id);
-    setSelectedIds((prev) => prev.filter((id) => id !== business.id));
-    notify.deleted("Business profile");
+    try {
+      await deleteBusinessProfile(business.id);
+      setSelectedIds((prev) => prev.filter((id) => id !== business.id));
+      notify.deleted("Business profile");
+      await loadBusinesses();
+    } catch (err) {
+      notify.error(err instanceof Error ? err.message : "Delete failed");
+    }
   };
 
-  const handleToggleStatus = (business: BusinessProfile) => {
+  const handleToggleStatus = async (business: BusinessProfile) => {
     const nextStatus = business.status === "active" ? "inactive" : "active";
-    updateBusiness(business.id, { status: nextStatus });
-  };
-
-  const handleApprove = (business: BusinessProfile) => {
-    updateBusiness(business.id, { verification: "verified", status: "active" });
-  };
-
-  const handleReject = (business: BusinessProfile) => {
-    updateBusiness(business.id, { verification: "rejected" });
+    try {
+      await updateBusinessProfile(business.id, { status: nextStatus });
+      notify.updated("Business profile");
+      await loadBusinesses();
+    } catch (err) {
+      notify.error(err instanceof Error ? err.message : "Status update failed");
+    }
   };
 
   const applySearch = (value: string) => {
     setFilters((prev) => ({ ...prev, search: value }));
-    setAppliedFilters((prev) => ({ ...prev, search: value }));
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+    searchTimer.current = setTimeout(() => {
+      setAppliedFilters((prev) => ({ ...prev, search: value }));
+      setPage(1);
+    }, 350);
   };
 
   return (
@@ -200,9 +218,11 @@ export default function BusinessProfilePage() {
           { label: "Business Profiles" },
         ]}
         actions={
-          <Button variant="primary" icon={Plus} onClick={goCreate}>
-            Create Business Profile
-          </Button>
+          <PermissionGate permission="BusinessProfile.Create">
+            <Button variant="primary" icon={Plus} onClick={goCreate}>
+              Create Business Profile
+            </Button>
+          </PermissionGate>
         }
       />
 
@@ -264,10 +284,7 @@ export default function BusinessProfilePage() {
                           type="checkbox"
                           checked={visibleColumns[key]}
                           onChange={() =>
-                            setVisibleColumns((prev) => ({
-                              ...prev,
-                              [key]: !prev[key],
-                            }))
+                            setVisibleColumns((prev) => ({ ...prev, [key]: !prev[key] }))
                           }
                           className="rounded border-[#D1D5DB] text-[#C89B3C] focus:ring-[#C89B3C]"
                         />
@@ -279,7 +296,6 @@ export default function BusinessProfilePage() {
             </div>
 
             <div className="hidden sm:block w-px h-7 bg-[#E8EAF0] mx-0.5" aria-hidden />
-
             <Button variant="secondary" size="sm" icon={Upload}>
               Import
             </Button>
@@ -294,43 +310,29 @@ export default function BusinessProfilePage() {
         open={filtersOpen}
         filters={filters}
         activeCount={activeFilterCount}
+        ownerOptions={ownerOptions}
         onChange={(key, value) => setFilters((prev) => ({ ...prev, [key]: value }))}
         onApply={() => {
           setAppliedFilters(filters);
+          setPage(1);
           setFiltersOpen(false);
           notify.filtersApplied();
         }}
         onReset={() => {
           setFilters(defaultFilters);
           setAppliedFilters(defaultFilters);
+          setPage(1);
           notify.filtersReset();
         }}
         onClose={() => setFiltersOpen(false)}
         onSave={() => notify.viewSaved()}
       />
 
-      {selectedIds.length > 0 && (
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-[14px] border border-[#C89B3C]/20 bg-[#FFF3EB] px-4 py-3">
-          <p className="text-sm font-medium text-[#111827]">
-            <span className="text-[#C89B3C] font-semibold">{selectedIds.length}</span> business profiles
-            selected
-          </p>
-          <div className="flex flex-wrap gap-2">
-            <Button variant="secondary" size="sm">
-              Activate
-            </Button>
-            <Button variant="secondary" size="sm">
-              Deactivate
-            </Button>
-            <Button variant="secondary" size="sm" icon={Download}>
-              Export
-            </Button>
-            <Button variant="danger" size="sm">
-              Delete
-            </Button>
-          </div>
+      {error ? (
+        <div className="rounded-[14px] border border-[#FECACA] bg-[#FEF2F2] px-4 py-3 text-sm text-[#DC2626]">
+          {error}
         </div>
-      )}
+      ) : null}
 
       {loading ? (
         <div className="bg-white border border-[#E8EAF0] rounded-[14px] p-6 animate-pulse space-y-3">
@@ -340,7 +342,7 @@ export default function BusinessProfilePage() {
         </div>
       ) : (
         <BusinessProfileTable
-          businesses={pageItems}
+          businesses={businesses}
           selectedIds={selectedIds}
           onToggleSelect={toggleSelect}
           onToggleSelectAll={toggleSelectAll}
@@ -352,8 +354,6 @@ export default function BusinessProfilePage() {
           onEdit={goEdit}
           onDelete={handleDelete}
           onToggleStatus={handleToggleStatus}
-          onApprove={handleApprove}
-          onReject={handleReject}
           emptyAction={goCreate}
         />
       )}
@@ -363,7 +363,10 @@ export default function BusinessProfilePage() {
           <span>Rows</span>
           <select
             value={pageSize}
-            onChange={(e) => setPageSize(Number(e.target.value))}
+            onChange={(e) => {
+              setPageSize(Number(e.target.value));
+              setPage(1);
+            }}
             className="h-9 px-2.5 rounded-[10px] border border-[#E8EAF0] bg-white text-sm text-[#111827] focus:outline-none focus:ring-2 focus:ring-[#C89B3C]/25"
           >
             {[10, 25, 50, 100].map((n) => (
@@ -375,11 +378,10 @@ export default function BusinessProfilePage() {
           <span>
             Showing{" "}
             <span className="font-medium text-[#111827]">
-              {filtered.length === 0 ? 0 : startIndex + 1}-
-              {Math.min(startIndex + pageSize, filtered.length)}
+              {total === 0 ? 0 : startIndex + 1}-{Math.min(startIndex + pageSize, total)}
             </span>{" "}
-            of <span className="font-medium text-[#111827]">{filtered.length.toLocaleString()}</span>{" "}
-            Business Profiles
+            of <span className="font-medium text-[#111827]">{total.toLocaleString()}</span> Business
+            Profiles
           </span>
         </div>
         <div className="flex items-center gap-1.5">

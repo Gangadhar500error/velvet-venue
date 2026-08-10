@@ -1,10 +1,12 @@
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.api.api import api_router
 from app.core.config import get_settings
@@ -55,6 +57,14 @@ def create_application() -> FastAPI:
 
     register_exception_handlers(app)
     app.include_router(api_router)
+
+    upload_root = Path(settings.UPLOAD_DIR).resolve()
+    upload_root.mkdir(parents=True, exist_ok=True)
+    app.mount(
+        settings.UPLOAD_BASE_URL,
+        StaticFiles(directory=str(upload_root)),
+        name="uploads",
+    )
 
     return app
 
