@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   Columns3,
@@ -15,12 +15,18 @@ import { Button } from "../_components/ui/Button";
 import { FilterPanel } from "./components/FilterPanel";
 import { CustomerTable, columnLabels } from "./components/CustomerTable";
 import { confirmAction, notify } from "../_components/ui/Toast";
-import { useDemoStore } from "../store/demoStore";
 import {
   Customer,
   CustomerColumnKey,
   CustomerFilters,
 } from "./types";
+import {
+  deleteCustomer,
+  fetchCustomers,
+  filtersToParams,
+  mapCustomerListItem,
+} from "@/lib/customers";
+import { PermissionGate } from "@/components/PermissionGate";
 
 const defaultFilters: CustomerFilters = {
   search: "",
@@ -52,8 +58,9 @@ const defaultColumns: Record<CustomerColumnKey, boolean> = {
 export default function CustomersPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
-  const customers = useDemoStore((s) => s.customers);
-  const removeCustomer = useDemoStore((s) => s.removeCustomer);
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
   const [filters, setFilters] = useState<CustomerFilters>(defaultFilters);
   const [appliedFilters, setAppliedFilters] = useState<CustomerFilters>(defaultFilters);
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -64,12 +71,32 @@ export default function CustomersPage() {
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [visibleColumns, setVisibleColumns] = useState(defaultColumns);
   const [columnsOpen, setColumnsOpen] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const columnsRef = useRef<HTMLDivElement>(null);
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const loadCustomers = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const params = filtersToParams(appliedFilters, page, pageSize, sortKey, sortDir);
+      const data = await fetchCustomers(params);
+      setCustomers(data.items.map(mapCustomerListItem));
+      setTotal(data.total);
+      setTotalPages(Math.max(1, data.total_pages));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load customers");
+      setCustomers([]);
+      setTotal(0);
+      setTotalPages(1);
+    } finally {
+      setLoading(false);
+    }
+  }, [appliedFilters, page, pageSize, sortKey, sortDir]);
 
   useEffect(() => {
-    const t = setTimeout(() => setLoading(false), 600);
-    return () => clearTimeout(t);
-  }, []);
+    loadCustomers();
+  }, [loadCustomers]);
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -95,46 +122,7 @@ export default function CustomersPage() {
     ].filter(Boolean).length;
   }, [appliedFilters]);
 
-  const filtered = useMemo(() => {
-    let list = [...customers];
-    const f = appliedFilters;
-
-    if (f.search) {
-      const q = f.search.toLowerCase();
-      list = list.filter(
-        (c) =>
-          c.name.toLowerCase().includes(q) ||
-          c.email.toLowerCase().includes(q) ||
-          c.phone.toLowerCase().includes(q) ||
-          c.customerId.toLowerCase().includes(q)
-      );
-    }
-    if (f.status) list = list.filter((c) => c.status === f.status);
-    if (f.city) list = list.filter((c) => c.city === f.city);
-    if (f.source) list = list.filter((c) => c.source === f.source);
-    if (f.verification) list = list.filter((c) => c.verification === f.verification);
-    if (f.bookingsMin) list = list.filter((c) => c.bookings >= Number(f.bookingsMin));
-    if (f.spendMin) list = list.filter((c) => c.totalSpend >= Number(f.spendMin));
-    if (f.dateFrom) list = list.filter((c) => c.registrationDate >= f.dateFrom);
-    if (f.dateTo) list = list.filter((c) => c.registrationDate <= f.dateTo);
-
-    list.sort((a, b) => {
-      const av = a[sortKey as keyof Customer];
-      const bv = b[sortKey as keyof Customer];
-      if (typeof av === "number" && typeof bv === "number") {
-        return sortDir === "asc" ? av - bv : bv - av;
-      }
-      return sortDir === "asc"
-        ? String(av).localeCompare(String(bv))
-        : String(bv).localeCompare(String(av));
-    });
-
-    return list;
-  }, [customers, appliedFilters, sortKey, sortDir]);
-
-  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
-  const startIndex = (page - 1) * pageSize;
-  const pageItems = filtered.slice(startIndex, startIndex + pageSize);
+  const startIndex = total === 0 ? 0 : (page - 1) * pageSize;
 
   useEffect(() => {
     setPage(1);
@@ -155,8 +143,8 @@ export default function CustomersPage() {
   };
 
   const toggleSelectAll = () => {
-    if (selectedIds.length === pageItems.length) setSelectedIds([]);
-    else setSelectedIds(pageItems.map((c) => c.id));
+    if (selectedIds.length === customers.length) setSelectedIds([]);
+    else setSelectedIds(customers.map((c) => c.id));
   };
 
   const goCreate = () => router.push("/admin/customers/create");
@@ -165,17 +153,25 @@ export default function CustomersPage() {
   const handleDelete = async (customer: Customer) => {
     const ok = await confirmAction({
       title: "Delete Customer?",
-      message: `Are you sure you want to delete ${customer.name}?\n\nThis action cannot be undone.`,
+      message: `Are you sure you want to delete ${customer.name}?\n\nThis will soft-delete the customer record.`,
     });
     if (!ok) return;
-    removeCustomer(customer.id);
-    setSelectedIds((prev) => prev.filter((id) => id !== customer.id));
-    notify.deleted("Customer");
+    try {
+      await deleteCustomer(customer.id);
+      setSelectedIds((prev) => prev.filter((id) => id !== customer.id));
+      notify.deleted("Customer");
+      await loadCustomers();
+    } catch (err) {
+      notify.error(err instanceof Error ? err.message : "Delete failed");
+    }
   };
 
   const applySearch = (value: string) => {
     setFilters((prev) => ({ ...prev, search: value }));
-    setAppliedFilters((prev) => ({ ...prev, search: value }));
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+    searchTimer.current = setTimeout(() => {
+      setAppliedFilters((prev) => ({ ...prev, search: value }));
+    }, 350);
   };
 
   return (
@@ -189,9 +185,11 @@ export default function CustomersPage() {
           { label: "Customers" },
         ]}
         actions={
-          <Button variant="primary" icon={Plus} onClick={goCreate}>
-            Create Customer
-          </Button>
+          <PermissionGate permission="Customer.Create">
+            <Button variant="primary" icon={Plus} onClick={goCreate}>
+              Create Customer
+            </Button>
+          </PermissionGate>
         }
       />
 
@@ -272,9 +270,11 @@ export default function CustomersPage() {
             <Button variant="secondary" size="sm" icon={Upload}>
               Import
             </Button>
-            <Button variant="secondary" size="sm" icon={Download}>
-              Export
-            </Button>
+            <PermissionGate permission="Customer.Export">
+              <Button variant="secondary" size="sm" icon={Download}>
+                Export
+              </Button>
+            </PermissionGate>
           </div>
         </div>
       </div>
@@ -297,6 +297,12 @@ export default function CustomersPage() {
         onClose={() => setFiltersOpen(false)}
         onSave={() => notify.viewSaved()}
       />
+
+      {error ? (
+        <div className="rounded-[14px] border border-[#FECACA] bg-[#FEF2F2] px-4 py-3 text-sm text-[#DC2626]">
+          {error}
+        </div>
+      ) : null}
 
       {selectedIds.length > 0 && (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-[14px] border border-[#C89B3C]/20 bg-[#FFF3EB] px-4 py-3">
@@ -329,7 +335,7 @@ export default function CustomersPage() {
         </div>
       ) : (
         <CustomerTable
-          customers={pageItems}
+          customers={customers}
           selectedIds={selectedIds}
           onToggleSelect={toggleSelect}
           onToggleSelectAll={toggleSelectAll}
@@ -361,10 +367,10 @@ export default function CustomersPage() {
           <span>
             Showing{" "}
             <span className="font-medium text-[#111827]">
-              {filtered.length === 0 ? 0 : startIndex + 1}-
-              {Math.min(startIndex + pageSize, filtered.length)}
+              {total === 0 ? 0 : startIndex + 1}-
+              {Math.min(startIndex + pageSize, total)}
             </span>{" "}
-            of <span className="font-medium text-[#111827]">{filtered.length.toLocaleString()}</span>{" "}
+            of <span className="font-medium text-[#111827]">{total.toLocaleString()}</span>{" "}
             Customers
           </span>
         </div>

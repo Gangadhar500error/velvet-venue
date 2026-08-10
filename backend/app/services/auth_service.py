@@ -9,6 +9,7 @@ from app.core.security import (
     verify_password,
     verify_refresh_token,
 )
+from app.models.customer import RegistrationSource
 from app.models.role import RoleName
 from app.models.user import User
 from app.repositories.auth_repository import AuthRepository
@@ -30,6 +31,7 @@ from app.schemas.auth import (
     VerifyEmailRequest,
     signup_role_to_enum,
 )
+from app.services.customer_service import CustomerService
 from app.services.permission_service import PermissionService
 
 
@@ -38,6 +40,7 @@ class AuthService:
         self.repo = AuthRepository(db)
         self.db = db
         self.permissions = PermissionService(db)
+        self.customers = CustomerService(db)
         self._token_blacklist: set[str] = set()
 
     async def signup(self, payload: SignupRequest) -> SignupResponse:
@@ -54,7 +57,7 @@ class AuthService:
             )
 
         role_name = signup_role_to_enum(payload.role)
-        await self.repo.create_user(
+        user = await self.repo.create_user(
             role_name=role_name,
             email=payload.email,
             password=payload.password,
@@ -62,22 +65,36 @@ class AuthService:
             last_name=payload.last_name,
             phone=payload.phone,
         )
+        if role_name == RoleName.CUSTOMER:
+            await self.customers.ensure_customer_for_user(
+                user,
+                registration_source=RegistrationSource.WEBSITE.value,
+            )
         await self.db.commit()
         return SignupResponse()
 
     async def login(self, payload: LoginRequest) -> LoginResponse:
         user = await self.repo.get_user_by_email(payload.email)
-        if user is None or not verify_password(payload.password, user.password_hash):
+        if (
+            user is None
+            or not user.password_hash
+            or not verify_password(payload.password, user.password_hash)
+        ):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid email or password.",
             )
 
-        if not user.is_active:
+        if not user.is_active or user.status != "active":
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Account is inactive.",
             )
+
+        from datetime import UTC, datetime
+
+        user.last_login_at = datetime.now(UTC)
+        await self.db.commit()
 
         role_name = user.role.name.value
         user_permissions = sorted(await self.permissions.get_user_permissions(user))
@@ -85,15 +102,21 @@ class AuthService:
         access_token = create_access_token(user.id, user.email, role_name)
         refresh_token = create_refresh_token(user.id, user.email, role_name)
 
+        customer = None
+        if role_name == RoleName.CUSTOMER.value:
+            customer = await self.customers.repo.get_by_user_id(user.id)
+
         return LoginResponse(
             access_token=access_token,
             refresh_token=refresh_token,
             user=LoginUserResponse(
                 id=user.id,
-                name=f"{user.first_name} {user.last_name}".strip(),
+                name=user.full_name or f"{user.first_name} {user.last_name}".strip(),
                 role=role_name,
                 portal=portal,
                 permissions=user_permissions,
+                customer_id=customer.id if customer else None,
+                customer_code=customer.customer_code if customer else None,
             ),
         )
 
@@ -102,6 +125,7 @@ class AuthService:
         user_permissions = sorted(await self.permissions.get_user_permissions(user))
         portal = self.permissions.get_portal_for_role(role_name)
         data_scope = self.permissions.get_data_scope(user).value
+        customer = await self.customers.repo.get_by_user_id(user.id)
         return MeResponse(
             id=user.id,
             email=user.email,
@@ -109,10 +133,12 @@ class AuthService:
             portal=portal,
             permissions=user_permissions,
             data_scope=data_scope,
-            phone=user.phone,
+            phone=user.mobile or user.phone,
             first_name=user.first_name,
             last_name=user.last_name,
             created_at=user.created_at,
+            customer_id=customer.id if customer else None,
+            customer_code=customer.customer_code if customer else None,
         )
 
     async def refresh_access_token(self, payload: RefreshTokenRequest) -> RefreshTokenResponse:
@@ -152,7 +178,9 @@ class AuthService:
     async def change_password(
         self, user: User, payload: ChangePasswordRequest
     ) -> ChangePasswordResponse:
-        if not verify_password(payload.old_password, user.password_hash):
+        if not user.password_hash or not verify_password(
+            payload.old_password, user.password_hash
+        ):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Old password is incorrect.",

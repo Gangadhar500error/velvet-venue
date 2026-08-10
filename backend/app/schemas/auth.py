@@ -74,6 +74,8 @@ class LoginUserResponse(BaseModel):
     role: str
     portal: str
     permissions: list[str] = Field(default_factory=list)
+    customer_id: uuid.UUID | None = None
+    customer_code: str | None = None
 
 
 class LoginResponse(BaseModel):
@@ -98,6 +100,8 @@ class MeResponse(BaseModel):
     first_name: str
     last_name: str
     created_at: datetime
+    customer_id: uuid.UUID | None = None
+    customer_code: str | None = None
 
 
 class RefreshTokenRequest(BaseModel):

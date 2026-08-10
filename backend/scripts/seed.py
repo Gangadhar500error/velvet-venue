@@ -10,6 +10,7 @@ from app.models.role import RoleName
 from app.models.user import User
 from app.repositories.role_repository import RoleRepository
 from app.repositories.user_repository import UserRepository
+from scripts.seed_customers import seed_customers
 from scripts.seed_permissions import run_rbac_seed
 
 logger = get_logger(__name__)
@@ -92,6 +93,7 @@ async def run_seed() -> None:
             roles = await seed_roles(session)
             await run_rbac_seed(session)
             await seed_users(session, roles)
+            await seed_customers(session)
             await session.commit()
             logger.info("Database seed completed successfully")
         except Exception:

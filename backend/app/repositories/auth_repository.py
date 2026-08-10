@@ -34,17 +34,28 @@ class AuthRepository:
         first_name: str,
         last_name: str,
         phone: str | None = None,
+        email_verified: bool = False,
+        mobile_verified: bool = False,
+        status: str = "active",
+        tenant_id: uuid.UUID | None = None,
     ) -> User:
         role = await self.roles.get_or_create(role_name)
+        full_name = f"{first_name.strip()} {last_name.strip()}".strip()
         user = User(
+            tenant_id=tenant_id,
             role_id=role.id,
             email=email.lower().strip(),
             password_hash=hash_password(password),
             first_name=first_name.strip(),
             last_name=last_name.strip(),
+            full_name=full_name,
             phone=phone,
-            is_active=True,
-            is_verified=False,
+            mobile=phone,
+            email_verified=email_verified,
+            mobile_verified=mobile_verified,
+            status=status,
+            is_active=status == "active",
+            is_verified=email_verified,
         )
         return await self.users.create(user)
 
