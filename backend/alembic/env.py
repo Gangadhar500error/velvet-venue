@@ -8,7 +8,15 @@ from sqlalchemy.engine import Connection
 
 from app.core.config import get_settings
 from app.db.base import Base
-from app.models import Customer, Menu, Permission, Role, RolePermission, User  # noqa: F401
+from app.models import (  # noqa: F401
+    Customer,
+    Menu,
+    Permission,
+    Role,
+    RolePermission,
+    User,
+    VenueOwner,
+)
 
 config = context.config
 settings = get_settings()

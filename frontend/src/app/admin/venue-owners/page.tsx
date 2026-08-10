@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   Columns3,
@@ -15,12 +15,19 @@ import { Button } from "../_components/ui/Button";
 import { FilterPanel } from "./components/FilterPanel";
 import { VenueOwnerTable, columnLabels } from "./components/VenueOwnerTable";
 import { confirmAction, notify } from "../_components/ui/Toast";
-import { useDemoStore } from "../store/demoStore";
 import {
   VenueOwner,
   VenueOwnerColumnKey,
   VenueOwnerFilters,
 } from "./types";
+import {
+  deleteVenueOwner,
+  fetchVenueOwners,
+  filtersToParams,
+  mapVenueOwnerListItem,
+  updateVenueOwner,
+} from "@/lib/venue-owners";
+import { PermissionGate } from "@/components/PermissionGate";
 
 const defaultFilters: VenueOwnerFilters = {
   search: "",
@@ -36,8 +43,8 @@ const defaultFilters: VenueOwnerFilters = {
 const defaultColumns: Record<VenueOwnerColumnKey, boolean> = {
   profile: true,
   ownerId: true,
-  mobile: true,
   email: true,
+  mobile: true,
   city: true,
   businesses: true,
   verification: true,
@@ -49,9 +56,9 @@ const defaultColumns: Record<VenueOwnerColumnKey, boolean> = {
 export default function VenueOwnersPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
-  const owners = useDemoStore((s) => s.vendors);
-  const updateVendor = useDemoStore((s) => s.updateVendor);
-  const removeVendor = useDemoStore((s) => s.removeVendor);
+  const [owners, setOwners] = useState<VenueOwner[]>([]);
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
   const [filters, setFilters] = useState<VenueOwnerFilters>(defaultFilters);
   const [appliedFilters, setAppliedFilters] = useState<VenueOwnerFilters>(defaultFilters);
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -62,12 +69,32 @@ export default function VenueOwnersPage() {
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [visibleColumns, setVisibleColumns] = useState(defaultColumns);
   const [columnsOpen, setColumnsOpen] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const columnsRef = useRef<HTMLDivElement>(null);
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const loadOwners = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const params = filtersToParams(appliedFilters, page, pageSize, sortKey, sortDir);
+      const data = await fetchVenueOwners(params);
+      setOwners(data.items.map(mapVenueOwnerListItem));
+      setTotal(data.total);
+      setTotalPages(Math.max(1, data.total_pages));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load venue owners");
+      setOwners([]);
+      setTotal(0);
+      setTotalPages(1);
+    } finally {
+      setLoading(false);
+    }
+  }, [appliedFilters, page, pageSize, sortKey, sortDir]);
 
   useEffect(() => {
-    const t = setTimeout(() => setLoading(false), 600);
-    return () => clearTimeout(t);
-  }, []);
+    loadOwners();
+  }, [loadOwners]);
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -81,58 +108,12 @@ export default function VenueOwnersPage() {
 
   const activeFilterCount = useMemo(() => {
     const f = appliedFilters;
-    return [
-      f.status,
-      f.city,
-      f.source,
-      f.verification,
-      f.dateFrom,
-      f.dateTo,
-      f.businessesMin,
-    ].filter(Boolean).length;
+    return [f.status, f.city, f.source, f.verification, f.dateFrom, f.dateTo, f.businessesMin].filter(
+      Boolean
+    ).length;
   }, [appliedFilters]);
 
-  const filtered = useMemo(() => {
-    let list = [...owners];
-    const f = appliedFilters;
-
-    if (f.search) {
-      const q = f.search.toLowerCase();
-      list = list.filter(
-        (o) =>
-          o.name.toLowerCase().includes(q) ||
-          o.firstName.toLowerCase().includes(q) ||
-          o.lastName.toLowerCase().includes(q) ||
-          o.email.toLowerCase().includes(q) ||
-          o.phone.toLowerCase().includes(q) ||
-          o.ownerId.toLowerCase().includes(q)
-      );
-    }
-    if (f.status) list = list.filter((o) => o.status === f.status);
-    if (f.city) list = list.filter((o) => o.city === f.city);
-    if (f.source) list = list.filter((o) => o.source === f.source);
-    if (f.verification) list = list.filter((o) => o.verification === f.verification);
-    if (f.businessesMin) list = list.filter((o) => o.assignedBusinesses >= Number(f.businessesMin));
-    if (f.dateFrom) list = list.filter((o) => o.registrationDate >= f.dateFrom);
-    if (f.dateTo) list = list.filter((o) => o.registrationDate <= f.dateTo);
-
-    list.sort((a, b) => {
-      const av = a[sortKey as keyof VenueOwner];
-      const bv = b[sortKey as keyof VenueOwner];
-      if (typeof av === "number" && typeof bv === "number") {
-        return sortDir === "asc" ? av - bv : bv - av;
-      }
-      return sortDir === "asc"
-        ? String(av).localeCompare(String(bv))
-        : String(bv).localeCompare(String(av));
-    });
-
-    return list;
-  }, [owners, appliedFilters, sortKey, sortDir]);
-
-  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
-  const startIndex = (page - 1) * pageSize;
-  const pageItems = filtered.slice(startIndex, startIndex + pageSize);
+  const startIndex = total === 0 ? 0 : (page - 1) * pageSize;
 
   useEffect(() => {
     setPage(1);
@@ -147,14 +128,12 @@ export default function VenueOwnersPage() {
   };
 
   const toggleSelect = (id: string) => {
-    setSelectedIds((prev) =>
-      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
-    );
+    setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
   };
 
   const toggleSelectAll = () => {
-    if (selectedIds.length === pageItems.length) setSelectedIds([]);
-    else setSelectedIds(pageItems.map((o) => o.id));
+    if (selectedIds.length === owners.length) setSelectedIds([]);
+    else setSelectedIds(owners.map((o) => o.id));
   };
 
   const goCreate = () => router.push("/admin/venue-owners/create");
@@ -163,38 +142,71 @@ export default function VenueOwnersPage() {
   const handleDelete = async (owner: VenueOwner) => {
     const ok = await confirmAction({
       title: "Delete Venue Owner?",
-      message: `Are you sure you want to delete ${owner.name}?\n\nThis action cannot be undone.`,
+      message: `Are you sure you want to delete ${owner.name}?\n\nThis will soft-delete the owner and deactivate their login.`,
     });
     if (!ok) return;
-    removeVendor(owner.id);
-    setSelectedIds((prev) => prev.filter((id) => id !== owner.id));
-    notify.deleted("Venue owner");
+    try {
+      await deleteVenueOwner(owner.id);
+      setSelectedIds((prev) => prev.filter((id) => id !== owner.id));
+      notify.deleted("Venue Owner");
+      await loadOwners();
+    } catch (err) {
+      notify.error(err instanceof Error ? err.message : "Delete failed");
+    }
   };
 
-  const handleToggleStatus = (owner: VenueOwner) => {
-    const nextStatus = owner.status === "active" ? "inactive" : "active";
-    updateVendor(owner.id, { status: nextStatus });
+  const handleToggleStatus = async (owner: VenueOwner) => {
+    const next = owner.status === "active" ? "inactive" : "active";
+    try {
+      await updateVenueOwner(owner.id, {
+        first_name: owner.firstName,
+        last_name: owner.lastName,
+        email: owner.email,
+        mobile: owner.phone,
+        alternate_mobile: owner.alternateMobile || null,
+        gender: owner.gender || null,
+        business_name: owner.businessName || null,
+        business_type: owner.businessType || null,
+        status: next,
+        verification_status: owner.verification,
+        address_line1: owner.addressLine1 || null,
+        address_line2: owner.addressLine2 || null,
+        city: owner.city || null,
+        state: owner.state || null,
+        country: owner.country || null,
+        postal_code: owner.zipCode || null,
+      });
+      notify.updated("Venue Owner");
+      await loadOwners();
+    } catch (err) {
+      notify.error(err instanceof Error ? err.message : "Status update failed");
+    }
   };
 
   const applySearch = (value: string) => {
     setFilters((prev) => ({ ...prev, search: value }));
-    setAppliedFilters((prev) => ({ ...prev, search: value }));
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+    searchTimer.current = setTimeout(() => {
+      setAppliedFilters((prev) => ({ ...prev, search: value }));
+    }, 350);
   };
 
   return (
     <div className="space-y-4 animate-fadeIn">
       <PageHeader
         title="Venue Owners"
-        subtitle="Manage venue owner accounts and access."
+        subtitle="Manage venue owners, business profiles, verification, and account lifecycle."
         breadcrumbs={[
           { label: "Dashboard", href: "/admin" },
           { label: "User Management" },
           { label: "Venue Owners" },
         ]}
         actions={
-          <Button variant="primary" icon={Plus} onClick={goCreate}>
-            Create Venue Owner
-          </Button>
+          <PermissionGate permission="Vendor.Create">
+            <Button variant="primary" icon={Plus} onClick={goCreate}>
+              Create Venue Owner
+            </Button>
+          </PermissionGate>
         }
       />
 
@@ -205,7 +217,7 @@ export default function VenueOwnersPage() {
             <input
               value={filters.search}
               onChange={(e) => applySearch(e.target.value)}
-              placeholder="Search by name, email, phone or owner ID..."
+              placeholder="Search by name, email, phone, owner ID or business..."
               className="w-full h-10 pl-10 pr-3.5 rounded-[10px] border border-[#E8EAF0] bg-[#FCFCFD] text-sm text-[#111827] placeholder:text-[#9CA3AF] hover:border-[#D1D5DB] focus:outline-none focus:bg-white focus:ring-2 focus:ring-[#C89B3C]/20 focus:border-[#C89B3C] transition-colors"
             />
           </div>
@@ -256,10 +268,7 @@ export default function VenueOwnersPage() {
                           type="checkbox"
                           checked={visibleColumns[key]}
                           onChange={() =>
-                            setVisibleColumns((prev) => ({
-                              ...prev,
-                              [key]: !prev[key],
-                            }))
+                            setVisibleColumns((prev) => ({ ...prev, [key]: !prev[key] }))
                           }
                           className="rounded border-[#D1D5DB] text-[#C89B3C] focus:ring-[#C89B3C]"
                         />
@@ -271,13 +280,14 @@ export default function VenueOwnersPage() {
             </div>
 
             <div className="hidden sm:block w-px h-7 bg-[#E8EAF0] mx-0.5" aria-hidden />
-
             <Button variant="secondary" size="sm" icon={Upload}>
               Import
             </Button>
-            <Button variant="secondary" size="sm" icon={Download}>
-              Export
-            </Button>
+            <PermissionGate permission="Vendor.Export">
+              <Button variant="secondary" size="sm" icon={Download}>
+                Export
+              </Button>
+            </PermissionGate>
           </div>
         </div>
       </div>
@@ -301,28 +311,11 @@ export default function VenueOwnersPage() {
         onSave={() => notify.viewSaved()}
       />
 
-      {selectedIds.length > 0 && (
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-[14px] border border-[#C89B3C]/20 bg-[#FFF3EB] px-4 py-3">
-          <p className="text-sm font-medium text-[#111827]">
-            <span className="text-[#C89B3C] font-semibold">{selectedIds.length}</span> venue owners
-            selected
-          </p>
-          <div className="flex flex-wrap gap-2">
-            <Button variant="secondary" size="sm">
-              Activate
-            </Button>
-            <Button variant="secondary" size="sm">
-              Deactivate
-            </Button>
-            <Button variant="secondary" size="sm" icon={Download}>
-              Export
-            </Button>
-            <Button variant="danger" size="sm">
-              Delete
-            </Button>
-          </div>
+      {error ? (
+        <div className="rounded-[14px] border border-[#FECACA] bg-[#FEF2F2] px-4 py-3 text-sm text-[#DC2626]">
+          {error}
         </div>
-      )}
+      ) : null}
 
       {loading ? (
         <div className="bg-white border border-[#E8EAF0] rounded-[14px] p-6 animate-pulse space-y-3">
@@ -332,7 +325,7 @@ export default function VenueOwnersPage() {
         </div>
       ) : (
         <VenueOwnerTable
-          owners={pageItems}
+          owners={owners}
           selectedIds={selectedIds}
           onToggleSelect={toggleSelect}
           onToggleSelectAll={toggleSelectAll}
@@ -365,11 +358,10 @@ export default function VenueOwnersPage() {
           <span>
             Showing{" "}
             <span className="font-medium text-[#111827]">
-              {filtered.length === 0 ? 0 : startIndex + 1}-
-              {Math.min(startIndex + pageSize, filtered.length)}
+              {total === 0 ? 0 : startIndex + 1}-{Math.min(startIndex + pageSize, total)}
             </span>{" "}
-            of <span className="font-medium text-[#111827]">{filtered.length.toLocaleString()}</span>{" "}
-            Venue Owners
+            of <span className="font-medium text-[#111827]">{total.toLocaleString()}</span> Venue
+            Owners
           </span>
         </div>
         <div className="flex items-center gap-1.5">

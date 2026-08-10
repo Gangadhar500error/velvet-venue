@@ -1,7 +1,7 @@
 "use client";
 
 import type { ComponentType, ReactNode } from "react";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import {
   Briefcase,
   Building2,
@@ -27,19 +27,17 @@ import {
   VenueOwnerFormValues,
   VenueOwnerStatus,
   VerificationStatus,
+  type AssignedBusiness,
+  type VenueOwnerBooking,
+  type VenueOwnerVenue,
 } from "../types";
 import { cityOptions, formatCurrency, formatDate, formatDateTime } from "../data";
-import { useDemoStore } from "../../store/demoStore";
 import {
+  EntityLink,
+  entityHref,
   RelationCard,
-  RelatedBookingsTable,
-  RelatedBusinessesTable,
-  RelatedVenuesTable,
+  RelationEmpty,
   ViewAllButton,
-  bookingsForOwner,
-  businessesForOwner,
-  summarizeBookings,
-  venuesForOwner,
 } from "../../_components/relations";
 import { EntityViewLayout } from "../../_components/layout/EntityViewLayout";
 
@@ -99,30 +97,18 @@ export function VenueOwnerWorkspace({
       .toUpperCase() || "VO";
   const crumbLabel = pageLabel || name || (isCreate ? "Create Venue Owner" : "Venue Owner");
 
-  const allBookings = useDemoStore((s) => s.bookings);
-  const allVenues = useDemoStore((s) => s.venues);
-  const allBusinesses = useDemoStore((s) => s.businesses);
-
-  const relatedBusinesses = useMemo(() => {
-    const a = businessesForOwner(allBusinesses, owner.id);
-    const b = businessesForOwner(allBusinesses, owner.ownerId || "");
-    const map = new Map(a.concat(b).map((x) => [x.id, x]));
-    return Array.from(map.values());
-  }, [allBusinesses, owner.id, owner.ownerId]);
-
-  const relatedVenues = useMemo(() => {
-    const a = venuesForOwner(allVenues, owner.id);
-    const b = venuesForOwner(allVenues, owner.ownerId || "");
-    const map = new Map(a.concat(b).map((x) => [x.id, x]));
-    return Array.from(map.values());
-  }, [allVenues, owner.id, owner.ownerId]);
-
-  const relatedBookings = useMemo(
-    () => bookingsForOwner(allBookings, allVenues, owner),
-    [allBookings, allVenues, owner]
-  );
-  const stats = useMemo(() => summarizeBookings(relatedBookings), [relatedBookings]);
-
+  const relatedBusinesses = owner.businesses || [];
+  const relatedVenues = owner.venues || [];
+  const relatedBookings = owner.recentBookings || [];
+  const overview = owner.overview || {
+    businessProfilesCount: owner.assignedBusinesses || 0,
+    venuesCount: owner.totalVenues || 0,
+    totalBookings: 0,
+    revenue: 0,
+    pendingPayments: 0,
+    completedEvents: 0,
+    upcomingEvents: 0,
+  };
   return (
     <div className="flex flex-col gap-3 animate-fadeIn pb-6">
       <PageBreadcrumb
@@ -448,13 +434,13 @@ export function VenueOwnerWorkspace({
               owner={owner}
               isCreate={isCreate}
               stats={{
-                businesses: relatedBusinesses.length,
-                venues: relatedVenues.length,
-                bookings: stats.total,
-                revenue: stats.revenue,
-                pending: stats.pending,
-                completed: stats.completed,
-                upcoming: stats.upcoming,
+                businesses: overview.businessProfilesCount,
+                venues: overview.venuesCount,
+                bookings: overview.totalBookings,
+                revenue: overview.revenue,
+                pending: overview.pendingPayments,
+                completed: overview.completedEvents,
+                upcoming: overview.upcomingEvents,
               }}
             />
           }
@@ -470,7 +456,7 @@ export function VenueOwnerWorkspace({
                     <ViewAllButton href="/admin/business-profile" label="View All" />
                   }
                 >
-                  <RelatedBusinessesTable businesses={relatedBusinesses} />
+                  <OwnerBusinessesTable businesses={relatedBusinesses} />
                 </RelationCard>
 
                 <RelationCard
@@ -480,7 +466,7 @@ export function VenueOwnerWorkspace({
                   defaultOpen
                   actions={<ViewAllButton href="/admin/venues" label="View All" />}
                 >
-                  <RelatedVenuesTable venues={relatedVenues} />
+                  <OwnerVenuesTable venues={relatedVenues} />
                 </RelationCard>
 
                 <RelationCard
@@ -490,7 +476,7 @@ export function VenueOwnerWorkspace({
                   defaultOpen
                   actions={<ViewAllButton href="/admin/bookings" label="View All Bookings" />}
                 >
-                  <RelatedBookingsTable bookings={relatedBookings} showCustomer />
+                  <OwnerBookingsTable bookings={relatedBookings} />
                 </RelationCard>
               </>
             ) : undefined
@@ -718,6 +704,109 @@ function OverviewRow({ label, value }: { label: string; value: string }) {
     <div className="flex items-center justify-between gap-3">
       <span className="text-[13px] text-[#6B7280]">{label}</span>
       <span className="text-sm font-semibold text-[#111827]">{value}</span>
+    </div>
+  );
+}
+
+function OwnerBusinessesTable({ businesses }: { businesses: AssignedBusiness[] }) {
+  if (businesses.length === 0) {
+    return <RelationEmpty icon={Briefcase} text="No Business Profiles Available" />;
+  }
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full min-w-[640px] text-sm">
+        <thead>
+          <tr className="border-b border-[#E8EAF0] text-left text-[11px] uppercase tracking-wider text-[#6B7280]">
+            {["Business ID", "Business Name", "Type", "City", "Status"].map((h) => (
+              <th key={h} className="pb-2.5 pr-3 font-semibold whitespace-nowrap">
+                {h}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {businesses.map((b) => (
+            <tr key={b.id} className="border-b border-[#F3F4F6] last:border-0">
+              <td className="py-2.5 pr-3 whitespace-nowrap">
+                <EntityLink href={entityHref.business(b.id)}>{b.id.slice(0, 8)}</EntityLink>
+              </td>
+              <td className="py-2.5 pr-3 font-medium text-[#111827]">{b.name}</td>
+              <td className="py-2.5 pr-3 text-[#4B5563]">{b.businessType || "—"}</td>
+              <td className="py-2.5 pr-3 text-[#4B5563]">{b.city || "—"}</td>
+              <td className="py-2.5 pr-3 capitalize text-[#4B5563]">{b.status}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function OwnerVenuesTable({ venues }: { venues: VenueOwnerVenue[] }) {
+  if (venues.length === 0) {
+    return <RelationEmpty icon={Building2} text="No Venues Available" />;
+  }
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full min-w-[700px] text-sm">
+        <thead>
+          <tr className="border-b border-[#E8EAF0] text-left text-[11px] uppercase tracking-wider text-[#6B7280]">
+            {["Venue Name", "Venue Type", "Capacity", "City", "Status"].map((h) => (
+              <th key={h} className="pb-2.5 pr-3 font-semibold whitespace-nowrap">
+                {h}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {venues.map((v) => (
+            <tr key={v.id} className="border-b border-[#F3F4F6] last:border-0">
+              <td className="py-2.5 pr-3 font-medium text-[#111827]">
+                <EntityLink href={entityHref.venue(v.id)}>{v.name}</EntityLink>
+              </td>
+              <td className="py-2.5 pr-3 text-[#4B5563]">{v.venueType || "—"}</td>
+              <td className="py-2.5 pr-3 text-[#4B5563]">{v.capacity ?? "—"}</td>
+              <td className="py-2.5 pr-3 text-[#4B5563]">{v.city || "—"}</td>
+              <td className="py-2.5 pr-3 capitalize text-[#4B5563]">{v.status}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function OwnerBookingsTable({ bookings }: { bookings: VenueOwnerBooking[] }) {
+  if (bookings.length === 0) {
+    return <RelationEmpty icon={CalendarDays} text="No Bookings Found" />;
+  }
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full min-w-[760px] text-sm">
+        <thead>
+          <tr className="border-b border-[#E8EAF0] text-left text-[11px] uppercase tracking-wider text-[#6B7280]">
+            {["Booking ID", "Customer", "Venue", "Event Date", "Amount", "Status"].map((h) => (
+              <th key={h} className="pb-2.5 pr-3 font-semibold whitespace-nowrap">
+                {h}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {bookings.map((b) => (
+            <tr key={b.id} className="border-b border-[#F3F4F6] last:border-0">
+              <td className="py-2.5 pr-3 whitespace-nowrap">
+                <EntityLink href={entityHref.booking(b.id)}>{b.bookingId}</EntityLink>
+              </td>
+              <td className="py-2.5 pr-3 text-[#4B5563]">{b.customer}</td>
+              <td className="py-2.5 pr-3 text-[#4B5563]">{b.venue}</td>
+              <td className="py-2.5 pr-3 text-[#4B5563]">{b.date ? formatDate(b.date) : "—"}</td>
+              <td className="py-2.5 pr-3 font-medium text-[#111827]">{formatCurrency(b.amount)}</td>
+              <td className="py-2.5 pr-3 capitalize text-[#4B5563]">{b.status}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }

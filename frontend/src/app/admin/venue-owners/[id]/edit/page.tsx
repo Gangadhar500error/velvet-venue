@@ -1,27 +1,62 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Loader2 } from "lucide-react";
 import { venueOwnerToFormValues } from "../../data";
 import { VenueOwnerWorkspace } from "../../components/VenueOwnerWorkspace";
-import { VenueOwnerFormValues } from "../../types";
+import { VenueOwner, VenueOwnerFormValues } from "../../types";
 import { Button } from "../../../_components/ui/Button";
 import { PageHeader } from "../../../_components/ui/PageHeader";
 import { notify } from "../../../_components/ui/Toast";
-import { useDemoStore } from "../../../store/demoStore";
+import {
+  fetchVenueOwner,
+  formToUpdatePayload,
+  mapVenueOwnerDetail,
+  updateVenueOwner,
+} from "@/lib/venue-owners";
 
 export default function EditVenueOwnerPage() {
   const params = useParams();
   const id = params.id as string;
   const router = useRouter();
-  const owner = useDemoStore((s) => s.vendors.find((v) => v.id === id || v.ownerId === id));
-  const updateVendor = useDemoStore((s) => s.updateVendor);
-  const [form, setForm] = useState<VenueOwnerFormValues | null>(() =>
-    owner ? venueOwnerToFormValues(owner) : null
-  );
+  const [owner, setOwner] = useState<VenueOwner | null>(null);
+  const [form, setForm] = useState<VenueOwnerFormValues | null>(null);
   const [saving, setSaving] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      try {
+        const data = await fetchVenueOwner(id);
+        if (cancelled) return;
+        const mapped = mapVenueOwnerDetail(data);
+        setOwner(mapped);
+        setForm(venueOwnerToFormValues(mapped));
+      } catch {
+        if (!cancelled) {
+          setOwner(null);
+          setForm(null);
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [id]);
+
+  if (loading) {
+    return (
+      <div className="h-64 flex items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin text-[#C89B3C]" />
+      </div>
+    );
+  }
 
   if (!owner || !form) {
     return (
@@ -36,7 +71,11 @@ export default function EditVenueOwnerPage() {
             { label: "Edit" },
           ]}
           actions={
-            <Button variant="secondary" icon={ArrowLeft} onClick={() => router.push("/admin/venue-owners")}>
+            <Button
+              variant="secondary"
+              icon={ArrowLeft}
+              onClick={() => router.push("/admin/venue-owners")}
+            >
               Back to Venue Owners
             </Button>
           }
@@ -63,43 +102,23 @@ export default function EditVenueOwnerPage() {
   const handleCancel = () => router.push(`/admin/venue-owners/${owner.id}`);
 
   const handleSave = async () => {
+    if (!form.firstName.trim() || !form.lastName.trim() || !form.email.trim() || !form.phone.trim()) {
+      notify.validation("First name, last name, email, and phone are required.");
+      return;
+    }
     setSaving(true);
-    await new Promise((r) => setTimeout(r, 600));
-    const displayName = `${form.firstName} ${form.lastName}`.trim();
-    updateVendor(owner.id, {
-      firstName: form.firstName,
-      lastName: form.lastName,
-      name: displayName || owner.name,
-      email: form.email || owner.email,
-      phone: form.phone || owner.phone,
-      alternateMobile: form.alternateMobile,
-      gender: form.gender || owner.gender,
-      businessName: form.businessName,
-      businessType: form.businessType,
-      city: form.city || owner.city,
-      country: form.country || owner.country,
-      addressLine1: form.addressLine1,
-      addressLine2: form.addressLine2,
-      state: form.state,
-      zipCode: form.zipCode,
-      source: form.source,
-      status: form.status,
-      verification: form.verification,
-      initials: (displayName || owner.name)
-        .split(" ")
-        .filter(Boolean)
-        .map((n) => n[0])
-        .join("")
-        .slice(0, 2)
-        .toUpperCase(),
-    });
-    setSaving(false);
-    notify.updated("Venue owner");
-    router.push(`/admin/venue-owners/${owner.id}`);
+    try {
+      const result = await updateVenueOwner(owner.id, formToUpdatePayload(form));
+      notify.updated("Venue Owner");
+      router.push(`/admin/venue-owners/${result.venue_owner.id}`);
+    } catch (err) {
+      notify.error(err instanceof Error ? err.message : "Failed to update venue owner");
+    } finally {
+      setSaving(false);
+    }
   };
 
   const displayName = `${form.firstName} ${form.lastName}`.trim();
-
   const liveOwner = {
     ...owner,
     firstName: form.firstName,
@@ -122,7 +141,6 @@ export default function EditVenueOwnerPage() {
     verification: form.verification,
     initials: (displayName || owner.name)
       .split(" ")
-      .filter(Boolean)
       .map((n) => n[0])
       .join("")
       .slice(0, 2)

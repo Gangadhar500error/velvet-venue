@@ -11,6 +11,15 @@ export interface AssignedBusiness {
   status: "active" | "inactive" | "pending";
 }
 
+export interface VenueOwnerVenue {
+  id: string;
+  name: string;
+  venueType: string;
+  capacity: number | null;
+  city: string;
+  status: string;
+}
+
 export interface VenueOwnerBooking {
   id: string;
   bookingId: string;
@@ -20,6 +29,16 @@ export interface VenueOwnerBooking {
   amount: number;
   status: "upcoming" | "completed" | "cancelled" | "pending";
   date: string;
+}
+
+export interface VenueOwnerOverviewStats {
+  businessProfilesCount: number;
+  venuesCount: number;
+  totalBookings: number;
+  revenue: number;
+  pendingPayments: number;
+  completedEvents: number;
+  upcomingEvents: number;
 }
 
 export interface VenueOwner {
@@ -55,7 +74,9 @@ export interface VenueOwner {
   createdAt: string;
   updatedBy: string;
   updatedAt: string;
+  overview: VenueOwnerOverviewStats;
   businesses: AssignedBusiness[];
+  venues: VenueOwnerVenue[];
   recentBookings: VenueOwnerBooking[];
 }
 

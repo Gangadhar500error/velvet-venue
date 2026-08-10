@@ -12,6 +12,7 @@ from app.core.security import (
 from app.models.customer import RegistrationSource
 from app.models.role import RoleName
 from app.models.user import User
+from app.models.venue_owner import VenueOwnerRegistrationSource
 from app.repositories.auth_repository import AuthRepository
 from app.schemas.auth import (
     ChangePasswordRequest,
@@ -33,6 +34,7 @@ from app.schemas.auth import (
 )
 from app.services.customer_service import CustomerService
 from app.services.permission_service import PermissionService
+from app.services.venue_owner_service import VenueOwnerService
 
 
 class AuthService:
@@ -41,6 +43,7 @@ class AuthService:
         self.db = db
         self.permissions = PermissionService(db)
         self.customers = CustomerService(db)
+        self.venue_owners = VenueOwnerService(db)
         self._token_blacklist: set[str] = set()
 
     async def signup(self, payload: SignupRequest) -> SignupResponse:
@@ -69,6 +72,11 @@ class AuthService:
             await self.customers.ensure_customer_for_user(
                 user,
                 registration_source=RegistrationSource.WEBSITE.value,
+            )
+        elif role_name == RoleName.VENDOR:
+            await self.venue_owners.ensure_owner_for_user(
+                user,
+                registration_source=VenueOwnerRegistrationSource.WEBSITE.value,
             )
         await self.db.commit()
         return SignupResponse()
@@ -103,8 +111,11 @@ class AuthService:
         refresh_token = create_refresh_token(user.id, user.email, role_name)
 
         customer = None
+        venue_owner = None
         if role_name == RoleName.CUSTOMER.value:
             customer = await self.customers.repo.get_by_user_id(user.id)
+        elif role_name == RoleName.VENDOR.value:
+            venue_owner = await self.venue_owners.repo.get_by_user_id(user.id)
 
         return LoginResponse(
             access_token=access_token,
@@ -117,6 +128,8 @@ class AuthService:
                 permissions=user_permissions,
                 customer_id=customer.id if customer else None,
                 customer_code=customer.customer_code if customer else None,
+                venue_owner_id=venue_owner.id if venue_owner else None,
+                owner_code=venue_owner.owner_code if venue_owner else None,
             ),
         )
 
@@ -126,6 +139,7 @@ class AuthService:
         portal = self.permissions.get_portal_for_role(role_name)
         data_scope = self.permissions.get_data_scope(user).value
         customer = await self.customers.repo.get_by_user_id(user.id)
+        venue_owner = await self.venue_owners.repo.get_by_user_id(user.id)
         return MeResponse(
             id=user.id,
             email=user.email,
@@ -139,6 +153,8 @@ class AuthService:
             created_at=user.created_at,
             customer_id=customer.id if customer else None,
             customer_code=customer.customer_code if customer else None,
+            venue_owner_id=venue_owner.id if venue_owner else None,
+            owner_code=venue_owner.owner_code if venue_owner else None,
         )
 
     async def refresh_access_token(self, payload: RefreshTokenRequest) -> RefreshTokenResponse:
