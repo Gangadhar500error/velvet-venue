@@ -17,7 +17,11 @@ import {
   LogOut,
   CalendarClock,
   ClipboardCheck,
+  Loader2,
 } from "lucide-react";
+import { getInitials, getRoleLabel } from "@/lib/auth-display";
+import { useLogout } from "@/hooks/useLogout";
+import type { AuthUser } from "@/types/auth";
 
 interface AdminNavbarProps {
   onMenuClick: () => void;
@@ -25,6 +29,7 @@ interface AdminNavbarProps {
   isSidebarCollapsed: boolean;
   isDarkMode: boolean;
   onDarkModeToggle: (value: boolean) => void;
+  currentUser?: AuthUser | null;
 }
 
 const iconBtn =
@@ -36,7 +41,9 @@ export default function AdminNavbar({
   isSidebarCollapsed,
   isDarkMode,
   onDarkModeToggle,
+  currentUser,
 }: AdminNavbarProps) {
+  const { handleLogout, isLoggingOut } = useLogout();
   const [isSearchModalOpen, setIsSearchModalOpen] = useState(false);
   const [isNotifOpen, setIsNotifOpen] = useState(false);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
@@ -133,6 +140,11 @@ export default function AdminNavbar({
     { id: 2, title: "Task completed: Sunday prep", time: "45m ago", icon: ClipboardCheck },
     { id: 3, title: "System maintenance tonight", time: "1h ago", icon: Settings },
   ];
+
+  const displayName = currentUser?.name || "Admin User";
+  const displayEmail = currentUser?.email || "admin@velvetvenues.com";
+  const displayRole = getRoleLabel(currentUser?.role);
+  const initials = getInitials(displayName);
 
   const darkIconBtn = isDarkMode
     ? "p-2.5 rounded-[12px] transition-all duration-200 text-gray-300 hover:text-[#FB923C] hover:bg-white/[0.06]"
@@ -304,7 +316,7 @@ export default function AdminNavbar({
             aria-label="Open profile menu"
           >
             <div className="w-9 h-9 rounded-full bg-gradient-to-br from-[#C89B3C] to-[#B8862B] text-white flex items-center justify-center text-sm font-semibold shrink-0 shadow-sm">
-              JD
+              {initials}
             </div>
             <div className="hidden sm:block text-left min-w-0">
               <p
@@ -312,14 +324,14 @@ export default function AdminNavbar({
                   isDarkMode ? "text-white" : "text-[#111827]"
                 }`}
               >
-                Admin User
+                {displayName}
               </p>
               <p
                 className={`text-[11px] leading-tight truncate ${
                   isDarkMode ? "text-gray-400" : "text-[#94A3B8]"
                 }`}
               >
-                Super Admin
+                {displayRole}
               </p>
             </div>
           </button>
@@ -339,10 +351,10 @@ export default function AdminNavbar({
                     isDarkMode ? "text-white" : "text-[#111827]"
                   }`}
                 >
-                  Admin User
+                  {displayName}
                 </p>
                 <p className={`text-xs ${isDarkMode ? "text-gray-400" : "text-[#94A3B8]"}`}>
-                  admin@velvetvenues.com
+                  {displayEmail}
                 </p>
               </div>
               <Link
@@ -368,13 +380,24 @@ export default function AdminNavbar({
                 <Settings className="w-4 h-4" /> Settings
               </Link>
               <button
-                className={`w-full flex items-center gap-2 px-4 py-2.5 text-sm ${
+                type="button"
+                disabled={isLoggingOut}
+                onClick={async () => {
+                  setIsProfileOpen(false);
+                  await handleLogout();
+                }}
+                className={`w-full flex items-center gap-2 px-4 py-2.5 text-sm border-t ${
                   isDarkMode
-                    ? "hover:bg-gray-800 text-white"
-                    : "hover:bg-[#FCFAF8] text-[#C89B3C]"
-                }`}
+                    ? "border-gray-800 hover:bg-red-500/10 text-red-400"
+                    : "border-[#ECEEF2] hover:bg-red-50 text-red-600"
+                } disabled:opacity-60`}
               >
-                <LogOut className="w-4 h-4" /> Logout
+                {isLoggingOut ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <LogOut className="w-4 h-4" />
+                )}
+                {isLoggingOut ? "Signing out..." : "Sign out"}
               </button>
             </div>
           )}

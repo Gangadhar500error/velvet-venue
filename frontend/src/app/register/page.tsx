@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 
 import { venueImages } from "@/data/venueImages";
+import { signup } from "@/lib/auth";
 
 const workspaceImages = [
   { id: 1, image: venueImages.wedding, title: "Wedding Venues" },
@@ -35,6 +36,7 @@ const workspaceImages = [
 export default function RegisterPage() {
   const router = useRouter();
   const [fullName, setFullName] = useState("");
+  const [role, setRole] = useState<"customer" | "vendor">("customer");
   const [email, setEmail] = useState("");
   const [mobile, setMobile] = useState("");
   const [city, setCity] = useState("");
@@ -44,9 +46,6 @@ export default function RegisterPage() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [loading, setLoading] = useState(false);
-
-  const apiBaseUrl =
-    process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000/api";
 
   const duplicatedImages = [
     ...workspaceImages,
@@ -60,7 +59,9 @@ export default function RegisterPage() {
       return "Enter a valid email address";
     if (!mobile.trim() || mobile.replace(/\D/g, "").length < 10)
       return "Enter a valid 10-digit mobile number";
-    if (password.length < 6) return "Password must be at least 6 characters";
+    if (password.length < 8) return "Password must be at least 8 characters";
+    if (!/(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/.test(password))
+      return "Password must contain uppercase, lowercase, and a number";
     if (password !== confirmPassword) return "Passwords do not match";
     if (!acceptTerms) return "Please accept the Terms of Service to continue";
     return "";
@@ -80,42 +81,23 @@ export default function RegisterPage() {
     setLoading(true);
 
     try {
-      const response = await fetch(`${apiBaseUrl}/register`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Accept: "application/json",
-        },
-        credentials: "include",
-        body: JSON.stringify({
-          name: fullName.trim(),
-          user_name: email.trim(),
-          mobile: mobile.trim(),
-          city: city.trim(),
-          password,
-          password_confirmation: confirmPassword,
-          isajax: 1,
-        }),
+      const nameParts = fullName.trim().split(/\s+/);
+      const first_name = nameParts[0] || "";
+      const last_name = nameParts.slice(1).join(" ") || first_name;
+
+      await signup({
+        role,
+        first_name,
+        last_name,
+        email: email.trim(),
+        phone: mobile.trim() || undefined,
+        password,
+        confirm_password: confirmPassword,
       });
 
-      const data = await response.json();
-
-      if (data.error) {
-        const errorMessage = Array.isArray(data.error)
-          ? data.error[0]
-          : typeof data.error === "object"
-            ? Object.values(data.error)[0]
-            : data.error || "Registration failed";
-        throw new Error(String(errorMessage));
-      }
-
-      if (data.success) {
-        setSuccess("Account created successfully. Redirecting to sign in...");
-        setTimeout(() => router.push("/signin"), 1500);
-        return;
-      }
-
-      throw new Error("Invalid response from server");
+      setSuccess("Account created successfully. Redirecting to sign in...");
+      setTimeout(() => router.push("/signin"), 1500);
+      return;
     } catch (err: unknown) {
       const message =
         err instanceof Error
@@ -270,6 +252,36 @@ export default function RegisterPage() {
               )}
 
               <form onSubmit={handleSubmit} className="grid grid-cols-1 sm:grid-cols-2 gap-x-5 gap-y-3.5">
+                <div className="sm:col-span-2 min-w-0">
+                  <label className="block text-xs font-semibold text-gray-700 mb-1.5 font-body">
+                    Account Type
+                  </label>
+                  <div className="grid grid-cols-2 gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setRole("customer")}
+                      className={`py-2.5 px-3 rounded-lg text-sm font-medium border transition-all font-body ${
+                        role === "customer"
+                          ? "border-[#C89B3C] bg-[#C89B3C]/10 text-[#C89B3C]"
+                          : "border-gray-300 text-gray-600 hover:border-gray-400"
+                      }`}
+                    >
+                      Customer
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setRole("vendor")}
+                      className={`py-2.5 px-3 rounded-lg text-sm font-medium border transition-all font-body ${
+                        role === "vendor"
+                          ? "border-[#C89B3C] bg-[#C89B3C]/10 text-[#C89B3C]"
+                          : "border-gray-300 text-gray-600 hover:border-gray-400"
+                      }`}
+                    >
+                      Venue Owner
+                    </button>
+                  </div>
+                </div>
+
                 <div className="min-w-0">
                   <label
                     htmlFor="fullName"
@@ -381,7 +393,7 @@ export default function RegisterPage() {
                       required
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
-                      placeholder="Min. 6 characters"
+                      placeholder="Min. 8 characters"
                       className="w-full min-w-0 pl-11 pr-3 py-2.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#C89B3C] focus:border-[#C89B3C] outline-none transition-all font-body text-gray-900 placeholder-gray-400 bg-gray-50/50 focus:bg-white"
                     />
                   </div>

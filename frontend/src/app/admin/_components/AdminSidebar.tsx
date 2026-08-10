@@ -25,8 +25,12 @@ import {
   Database,
   Settings,
   LogOut,
+  Loader2,
 } from "lucide-react";
 import { useDemoStore } from "../store/demoStore";
+import { getInitials, getRoleLabel } from "@/lib/auth-display";
+import { useLogout } from "@/hooks/useLogout";
+import type { AuthUser } from "@/types/auth";
 
 interface NavItem {
   label: string;
@@ -103,6 +107,7 @@ interface AdminSidebarProps {
   isMobileOpen: boolean;
   onMobileClose: () => void;
   isDarkMode: boolean;
+  currentUser?: AuthUser | null;
 }
 
 export default function AdminSidebar({
@@ -110,8 +115,10 @@ export default function AdminSidebar({
   isMobileOpen,
   onMobileClose,
   isDarkMode,
+  currentUser,
 }: AdminSidebarProps) {
   const pathname = usePathname();
+  const { handleLogout, isLoggingOut } = useLogout();
   const bookingCount = useDemoStore((s) => s.bookings.length);
   const navItems = useMemo(() => buildNavItems(bookingCount), [bookingCount]);
   const [openItems, setOpenItems] = useState<string[]>([]);
@@ -160,6 +167,10 @@ export default function AdminSidebar({
     if (href === "/admin") return pathname === "/admin";
     return pathname === href || pathname.startsWith(`${href}/`);
   };
+
+  const displayName = currentUser?.name || "Admin User";
+  const displayRole = getRoleLabel(currentUser?.role);
+  const initials = getInitials(displayName);
 
   const isChildActive = (children?: NavItem[]) => {
     if (!children) return false;
@@ -436,31 +447,51 @@ export default function AdminSidebar({
         </nav>
 
         {showLabels ? (
-          <div className="shrink-0 border-t border-white/[0.08] px-3 py-3.5">
-            <div className="flex items-center gap-3 px-2 py-1.5 rounded-[12px] hover:bg-white/[0.05] transition-colors duration-200">
+          <div className="shrink-0 border-t border-white/[0.08] px-3 py-3.5 space-y-2">
+            <div className="flex items-center gap-3 px-2 py-1.5 rounded-[12px]">
               <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#C89B3C] to-[#B8862B] flex items-center justify-center text-white text-sm font-semibold shrink-0">
-                AD
+                {initials}
               </div>
               <div className="min-w-0 grow">
                 <p className="text-[15px] font-semibold text-white truncate leading-snug">
-                  Admin User
+                  {displayName}
                 </p>
-                <p className="text-xs text-[#AAB4C4] truncate mt-0.5">Super Admin</p>
+                <p className="text-xs text-[#AAB4C4] truncate mt-0.5">{displayRole}</p>
               </div>
-              <button
-                type="button"
-                className="p-2 rounded-[12px] text-[#AAB4C4] hover:text-white hover:bg-white/[0.08] transition-colors duration-200"
-                aria-label="Logout"
-              >
-                <LogOut className="w-[18px] h-[18px]" strokeWidth={1.75} />
-              </button>
             </div>
+            <button
+              type="button"
+              onClick={handleLogout}
+              disabled={isLoggingOut}
+              className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-[12px] text-sm font-medium text-[#E2E8F0] bg-white/[0.06] hover:bg-white/[0.1] hover:text-white border border-white/[0.08] transition-all duration-200 disabled:opacity-60"
+            >
+              {isLoggingOut ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <LogOut className="w-4 h-4" strokeWidth={1.75} />
+              )}
+              {isLoggingOut ? "Signing out..." : "Sign out"}
+            </button>
           </div>
         ) : (
-          <div className="shrink-0 border-t border-white/[0.08] py-3 flex justify-center">
+          <div className="shrink-0 border-t border-white/[0.08] py-3 flex flex-col items-center gap-2">
             <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#C89B3C] to-[#B8862B] flex items-center justify-center text-white text-sm font-semibold">
-              AD
+              {initials}
             </div>
+            <button
+              type="button"
+              onClick={handleLogout}
+              disabled={isLoggingOut}
+              title="Sign out"
+              aria-label="Sign out"
+              className="p-2 rounded-[12px] text-[#AAB4C4] hover:text-white hover:bg-white/[0.08] transition-colors duration-200 disabled:opacity-60"
+            >
+              {isLoggingOut ? (
+                <Loader2 className="w-[18px] h-[18px] animate-spin" />
+              ) : (
+                <LogOut className="w-[18px] h-[18px]" strokeWidth={1.75} />
+              )}
+            </button>
           </div>
         )}
       </motion.aside>

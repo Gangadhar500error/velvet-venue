@@ -8,6 +8,7 @@ import { motion } from "framer-motion";
 import { Mail, Lock, AlertCircle, Loader2 } from "lucide-react";
 
 import { venueImages } from "@/data/venueImages";
+import { getRedirectPathForRole, login } from "@/lib/auth";
 
 const workspaceImages = [
   { id: 1, image: venueImages.wedding, title: "Wedding Venues" },
@@ -32,8 +33,6 @@ export default function SigninPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000/api";
-
   // Duplicate images for seamless infinite scroll
   const duplicatedImages = [...workspaceImages, ...workspaceImages, ...workspaceImages];
 
@@ -43,45 +42,11 @@ export default function SigninPage() {
     setLoading(true);
 
     try {
-      const response = await fetch(`${apiBaseUrl}/login`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Accept: "application/json",
-        },
-        credentials: "include", // Include cookies for session-based auth
-        body: JSON.stringify({
-          user_name: email, // API expects 'user_name' field
-          password,
-          rememberme,
-          isajax: 1, // Required for JSON response from LoginController
-        }),
-      });
-
-      const data = await response.json();
-
-      // Handle error response format: {error: ['message']} or {error: {user_name: 'message'}}
-      if (data.error) {
-        const errorMessage = Array.isArray(data.error) 
-          ? data.error[0] 
-          : data.error.user_name || data.error || "Login failed";
-        throw new Error(errorMessage);
-      }
-
-      // Handle success response format: {success: {customer: 'Login success'}}
-      if (data.success && data.success.customer) {
-        // Session-based auth - cookies are automatically set
-        // Store success status
-        localStorage.setItem("login_success", "true");
-        localStorage.setItem("is_authenticated", "true");
-
-        // Redirect to admin dashboard
-        router.push("/admin");
-      } else {
-        throw new Error("Invalid response from server");
-      }
-    } catch (err: any) {
-      setError(err.message || "An error occurred during login");
+      const data = await login(email, password);
+      router.push(getRedirectPathForRole(data.user.role));
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "An error occurred during login";
+      setError(message);
     } finally {
       setLoading(false);
     }

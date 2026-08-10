@@ -2,41 +2,42 @@
  * API utility functions for making authenticated requests
  */
 
-const getApiBaseUrl = (): string => {
-  if (typeof window === 'undefined') {
-    return process.env.NEXT_PUBLIC_API_BASE_URL || 'http://127.0.0.1:8000/api';
-  }
-  return process.env.NEXT_PUBLIC_API_BASE_URL || 'http://127.0.0.1:8000/api';
-};
+import { getAccessToken, refreshAccessToken, clearAuth } from "@/lib/auth";
 
-const getAuthToken = (): string | null => {
-  if (typeof window === 'undefined') {
-    return null;
-  }
-  return localStorage.getItem('auth_token');
+const getApiBaseUrl = (): string => {
+  return process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000/api/v1";
 };
 
 interface ApiRequestOptions extends RequestInit {
   params?: Record<string, string | number | null | undefined>;
+  retry?: boolean;
+}
+
+async function parseApiError(response: Response): Promise<string> {
+  const errorData = await response.json().catch(() => ({
+    message: `HTTP error! status: ${response.status}`,
+  }));
+  if (typeof errorData.message === "string") return errorData.message;
+  if (typeof errorData.detail === "string") return errorData.detail;
+  return errorData.error || "API request failed";
 }
 
 /**
- * Make an authenticated API request
+ * Make an authenticated API request with automatic token refresh on 401
  */
 export async function apiRequest<T>(
   endpoint: string,
   options: ApiRequestOptions = {}
 ): Promise<T> {
-  const { params, ...fetchOptions } = options;
-  const token = getAuthToken();
+  const { params, retry = true, ...fetchOptions } = options;
+  let token = getAuthToken();
   const baseUrl = getApiBaseUrl();
 
-  // Build URL with query parameters
   let url = `${baseUrl}${endpoint}`;
   if (params) {
     const queryParams = new URLSearchParams();
     Object.entries(params).forEach(([key, value]) => {
-      if (value !== null && value !== undefined && value !== '') {
+      if (value !== null && value !== undefined && value !== "") {
         queryParams.append(key, String(value));
       }
     });
@@ -46,41 +47,50 @@ export async function apiRequest<T>(
     }
   }
 
-  // Set default headers
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    Accept: 'application/json',
-    ...(fetchOptions.headers as Record<string, string>),
+  const makeRequest = async (accessToken: string | null) => {
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+      ...(fetchOptions.headers as Record<string, string>),
+    };
+
+    if (accessToken) {
+      headers.Authorization = `Bearer ${accessToken}`;
+    }
+
+    return fetch(url, {
+      ...fetchOptions,
+      headers,
+    });
   };
 
-  // Add authorization header if token exists
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
+  let response = await makeRequest(token);
+
+  if (response.status === 401 && retry) {
+    const newToken = await refreshAccessToken();
+    if (newToken) {
+      token = newToken;
+      response = await makeRequest(newToken);
+    } else {
+      clearAuth();
+    }
   }
 
-  const response = await fetch(url, {
-    ...fetchOptions,
-    headers,
-    credentials: 'include', // Include cookies for session-based auth
-  });
-
   if (!response.ok) {
-    const errorData = await response.json().catch(() => ({
-      message: `HTTP error! status: ${response.status}`,
-    }));
-    throw new Error(errorData.message || errorData.error || 'API request failed');
+    throw new Error(await parseApiError(response));
   }
 
   return response.json();
 }
 
-/**
- * Fetch users (colleges) with pagination, sorting, and search
- */
+function getAuthToken(): string | null {
+  return getAccessToken();
+}
+
 export interface FetchUsersParams {
   search?: string;
   column?: string;
-  dir?: 'asc' | 'desc';
+  dir?: "asc" | "desc";
   length?: number;
   draw?: number;
   page?: number;
@@ -125,22 +135,22 @@ export interface UsersResponse {
       active: boolean;
     }>;
   };
-  payload: Record<string, any>;
+  payload: Record<string, unknown>;
 }
 
 export async function fetchUsers(
   params: FetchUsersParams = {}
 ): Promise<UsersResponse> {
   const {
-    search = '',
-    column = 'id',
-    dir = 'desc',
+    search = "",
+    column = "id",
+    dir = "desc",
     length = 10,
     draw = 1,
     page = 1,
   } = params;
 
-  return apiRequest<UsersResponse>('/v1/users', {
+  return apiRequest<UsersResponse>("/users", {
     params: {
       search: search || undefined,
       column,
@@ -151,4 +161,3 @@ export async function fetchUsers(
     },
   });
 }
-
