@@ -1,0 +1,835 @@
+import {
+  Booking,
+  BookingDocument,
+  BookingFormValues,
+  BookingStatus,
+  InvoiceStatus,
+  PaymentStatus,
+} from "./types";
+import { parseFoodSlotKeys, serializeMealGuests } from "./pricing";
+
+export const eventTypeOptions = [
+  "Wedding",
+  "Reception",
+  "Birthday",
+  "Engagement",
+  "Corporate",
+  "Conference",
+  "Baby Shower",
+  "Private Party",
+  "Cocktail",
+  "Other",
+];
+
+export const slotOptions = ["Full Day"];
+
+export const executiveOptions = [
+  "Ananya Iyer",
+  "Rohit Kapoor",
+  "Sneha Nair",
+  "Vikram Singh",
+  "Priya Mehta",
+];
+
+export const businessOptions = [
+  { id: "BIZ-300101", name: "Orchid Events Pvt Ltd" },
+  { id: "BIZ-300102", name: "Patel Celebrations" },
+  { id: "BIZ-300103", name: "Reddy Convention Spaces" },
+  { id: "BIZ-300104", name: "Singh Palace Events" },
+  { id: "BIZ-300105", name: "Coastal Celebrations LLP" },
+];
+
+export const venueOptions = [
+  { id: "1", venueId: "VEN-40011", name: "The Grand Orchid Banquet", businessId: "BIZ-300101", city: "Hyderabad" },
+  { id: "2", venueId: "VEN-40012", name: "Orchid Rooftop Lounge", businessId: "BIZ-300101", city: "Hyderabad" },
+  { id: "4", venueId: "VEN-50001", name: "Patel Grand Celebration Hall", businessId: "BIZ-300102", city: "Karimnagar" },
+  { id: "5", venueId: "VEN-50002", name: "Reddy Convention Centre", businessId: "BIZ-300103", city: "Hyderabad" },
+  { id: "7", venueId: "VEN-50004", name: "Singh Palace Banquet", businessId: "BIZ-300104", city: "Hyderabad" },
+  { id: "8", venueId: "VEN-50005", name: "Coastal Backwater Resort", businessId: "BIZ-300105", city: "Chennai" },
+];
+
+export const customerOptions = [
+  { id: "1", customerId: "CUST-100124", name: "Rahul Sharma", phone: "+91 98765 43210", email: "rahul.sharma@email.com", city: "Hyderabad" },
+  { id: "2", customerId: "CUST-100125", name: "Priya Patel", phone: "+91 98765 43211", email: "priya.patel@email.com", city: "Karimnagar" },
+  { id: "3", customerId: "CUST-100126", name: "Arjun Reddy", phone: "+91 98765 43212", email: "arjun.reddy@email.com", city: "Hyderabad" },
+  { id: "4", customerId: "CUST-100127", name: "Ananya Iyer", phone: "+91 98765 43213", email: "ananya.iyer@email.com", city: "Chennai" },
+  { id: "5", customerId: "CUST-100128", name: "Vikram Singh", phone: "+91 98765 43214", email: "vikram.singh@email.com", city: "Hyderabad" },
+  { id: "6", customerId: "CUST-100129", name: "Sneha Nair", phone: "+91 98765 43215", email: "sneha.nair@email.com", city: "Chennai" },
+];
+
+export const paymentMethodOptions = [
+  { value: "cash", label: "Cash" },
+  { value: "upi", label: "UPI" },
+  { value: "card", label: "Card" },
+  { value: "bank_transfer", label: "Bank Transfer" },
+  { value: "cheque", label: "Cheque" },
+  { value: "netbanking", label: "Net Banking" },
+  { value: "link", label: "Payment Link" },
+];
+
+export const recordPaymentMethodOptions = [
+  { value: "cash", label: "Cash" },
+  { value: "upi", label: "UPI" },
+  { value: "card", label: "Card" },
+  { value: "bank_transfer", label: "Bank Transfer" },
+  { value: "cheque", label: "Cheque" },
+];
+
+export function formatCurrency(amount: number) {
+  return new Intl.NumberFormat("en-IN", {
+    style: "currency",
+    currency: "INR",
+    maximumFractionDigits: 0,
+  }).format(amount || 0);
+}
+
+export function formatDate(iso: string) {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleDateString("en-IN", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+export function formatDateTime(iso: string) {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleString("en-IN", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+export function defaultDocuments(): BookingDocument[] {
+  return [
+    { id: "doc-form", key: "booking_form", label: "Booking Form", status: "missing" },
+    { id: "doc-agreement", key: "agreement", label: "Agreement", status: "missing" },
+    { id: "doc-invoice", key: "invoice", label: "Invoice", status: "missing" },
+    { id: "doc-id", key: "customer_id", label: "Customer ID", status: "missing" },
+    { id: "doc-other", key: "other", label: "Other Documents", status: "missing" },
+  ];
+}
+
+function docs(
+  overrides: Partial<Record<string, Partial<BookingDocument>>>
+): BookingDocument[] {
+  return defaultDocuments().map((d) => ({ ...d, ...(overrides[d.key] || {}) }));
+}
+
+export const mockBookings: Booking[] = [
+  {
+    id: "1",
+    bookingId: "BK-240811",
+    customerId: "CUST-100124",
+    customerName: "Rahul Sharma",
+    customerPhone: "+91 98765 43210",
+    customerEmail: "rahul.sharma@email.com",
+    customerCity: "Hyderabad",
+    businessId: "BIZ-300101",
+    businessName: "Orchid Events Pvt Ltd",
+    venueId: "VEN-40011",
+    venueName: "The Grand Orchid Banquet",
+    venueCity: "Hyderabad",
+    eventType: "Wedding",
+    eventDate: "2026-09-14",
+    bookingDate: "2026-07-02",
+    slot: "Full Day",
+    guestCount: 450,
+    specialRequirements: "Stage floral backdrop, Jain catering section, valet for 80 cars.",
+    bookingAmount: 485000,
+    advancePaid: 150000,
+    paidAmount: 250000,
+    pendingAmount: 235000,
+    refundAmount: 0,
+    taxAmount: 73800,
+    discountAmount: 15000,
+    addons: [
+      { id: "a1", name: "Decoration", amount: 45000 },
+      { id: "a2", name: "Photography", amount: 28000 },
+      { id: "a3", name: "DJ", amount: 18000 },
+    ],
+    bookingStatus: "confirmed",
+    paymentStatus: "partial",
+    invoiceStatus: "sent",
+    paymentMethod: "upi",
+    assignedExecutive: "Ananya Iyer",
+    notes: "VIP client. Prefer evening check-ins only.",
+    createdAt: "2026-07-02T10:20:00",
+    updatedAt: "2026-07-28T16:40:00",
+    createdBy: "Ananya Iyer",
+    updatedBy: "Ananya Iyer",
+    transactions: [
+      {
+        id: "t1",
+        transactionId: "TXN-981201",
+        method: "upi",
+        amount: 150000,
+        reference: "UPI-RAHUL-02JUL",
+        status: "success",
+        date: "2026-07-02T10:45:00",
+      },
+      {
+        id: "t2",
+        transactionId: "TXN-981455",
+        method: "card",
+        amount: 100000,
+        reference: "CARD-****4421",
+        status: "success",
+        date: "2026-07-20T14:10:00",
+      },
+    ],
+    documents: docs({
+      booking_form: { status: "verified", uploadedAt: "2026-07-02T11:00:00", verifiedBy: "Ananya Iyer", fileName: "bk-240811-form.pdf" },
+      agreement: { status: "verified", uploadedAt: "2026-07-03T09:30:00", verifiedBy: "Rohit Kapoor", fileName: "bk-240811-agreement.pdf" },
+      invoice: { status: "uploaded", uploadedAt: "2026-07-05T12:00:00", fileName: "INV-240811.pdf" },
+      customer_id: { status: "verified", uploadedAt: "2026-07-02T11:05:00", verifiedBy: "Ananya Iyer", fileName: "aadhaar-rahul.pdf" },
+    }),
+    timeline: [
+      { id: "tl1", type: "created", title: "Booking Created", description: "Reservation drafted and customer linked.", date: "2026-07-02T10:20:00", actor: "Ananya Iyer" },
+      { id: "tl2", type: "payment", title: "Payment Received", description: "Advance of ₹1,50,000 received via UPI.", date: "2026-07-02T10:45:00", actor: "System" },
+      { id: "tl3", type: "document", title: "Documents Uploaded", description: "Booking form and customer ID uploaded.", date: "2026-07-02T11:05:00", actor: "Ananya Iyer" },
+      { id: "tl4", type: "invoice", title: "Invoice Generated", description: "Invoice INV-240811 generated and sent.", date: "2026-07-05T12:00:00", actor: "Rohit Kapoor" },
+      { id: "tl5", type: "status", title: "Status Updated", description: "Booking marked as Confirmed.", date: "2026-07-05T12:15:00", actor: "Ananya Iyer" },
+      { id: "tl6", type: "payment", title: "Payment Received", description: "Additional ₹1,00,000 received via card.", date: "2026-07-20T14:10:00", actor: "System" },
+      { id: "tl7", type: "reminder", title: "Reminder Sent", description: "Balance payment reminder emailed to customer.", date: "2026-07-25T09:00:00", actor: "System" },
+      { id: "tl8", type: "contact", title: "Customer Contacted", description: "Discussed menu tasting schedule.", date: "2026-07-28T16:40:00", actor: "Ananya Iyer" },
+    ],
+    noteEntries: [
+      { id: "n1", body: "Customer requested Jain menu tasting on 20 Aug.", author: "Ananya Iyer", date: "2026-07-28T16:40:00" },
+      { id: "n2", body: "Valet capacity confirmed with venue ops.", author: "Rohit Kapoor", date: "2026-07-22T11:20:00", attachmentName: "valet-plan.pdf" },
+    ],
+  },
+  {
+    id: "2",
+    bookingId: "BK-240820",
+    customerId: "CUST-100125",
+    customerName: "Priya Patel",
+    customerPhone: "+91 98765 43211",
+    customerEmail: "priya.patel@email.com",
+    customerCity: "Karimnagar",
+    businessId: "BIZ-300102",
+    businessName: "Patel Celebrations",
+    venueId: "VEN-50001",
+    venueName: "Patel Grand Celebration Hall",
+    venueCity: "Karimnagar",
+    eventType: "Engagement",
+    eventDate: "2026-08-22",
+    bookingDate: "2026-07-10",
+    slot: "Full Day",
+    guestCount: 220,
+    specialRequirements: "Ring ceremony stage, soft lighting.",
+    bookingAmount: 185000,
+    advancePaid: 50000,
+    paidAmount: 50000,
+    pendingAmount: 135000,
+    refundAmount: 0,
+    taxAmount: 27900,
+    discountAmount: 5000,
+    addons: [{ id: "a1", name: "Decoration", amount: 22000 }],
+    bookingStatus: "pending",
+    paymentStatus: "partial",
+    invoiceStatus: "generated",
+    paymentMethod: "upi",
+    assignedExecutive: "Priya Mehta",
+    notes: "",
+    createdAt: "2026-07-10T09:10:00",
+    updatedAt: "2026-07-18T13:00:00",
+    createdBy: "Priya Mehta",
+    updatedBy: "Priya Mehta",
+    transactions: [
+      {
+        id: "t1",
+        transactionId: "TXN-990101",
+        method: "upi",
+        amount: 50000,
+        reference: "UPI-PRIYA-10JUL",
+        status: "success",
+        date: "2026-07-10T09:40:00",
+      },
+    ],
+    documents: docs({
+      booking_form: { status: "uploaded", uploadedAt: "2026-07-10T10:00:00", fileName: "bk-240820-form.pdf" },
+      customer_id: { status: "uploaded", uploadedAt: "2026-07-10T10:05:00", fileName: "id-priya.pdf" },
+    }),
+    timeline: [
+      { id: "tl1", type: "created", title: "Booking Created", description: "Engagement booking created.", date: "2026-07-10T09:10:00", actor: "Priya Mehta" },
+      { id: "tl2", type: "payment", title: "Payment Received", description: "Advance ₹50,000 received.", date: "2026-07-10T09:40:00", actor: "System" },
+      { id: "tl3", type: "invoice", title: "Invoice Generated", description: "Proforma invoice generated.", date: "2026-07-18T13:00:00", actor: "Priya Mehta" },
+    ],
+    noteEntries: [],
+  },
+  {
+    id: "3",
+    bookingId: "BK-240701",
+    customerId: "CUST-100126",
+    customerName: "Arjun Reddy",
+    customerPhone: "+91 98765 43212",
+    customerEmail: "arjun.reddy@email.com",
+    customerCity: "Hyderabad",
+    businessId: "BIZ-300103",
+    businessName: "Reddy Convention Spaces",
+    venueId: "VEN-50002",
+    venueName: "Reddy Convention Centre",
+    venueCity: "Hyderabad",
+    eventType: "Corporate",
+    eventDate: "2026-06-18",
+    bookingDate: "2026-05-01",
+    slot: "Full Day",
+    guestCount: 320,
+    specialRequirements: "AV setup, breakout rooms, lunch buffet.",
+    bookingAmount: 320000,
+    advancePaid: 100000,
+    paidAmount: 320000,
+    pendingAmount: 0,
+    refundAmount: 0,
+    taxAmount: 48600,
+    discountAmount: 10000,
+    addons: [
+      { id: "a1", name: "Projector", amount: 3500 },
+      { id: "a2", name: "Parking", amount: 8000 },
+    ],
+    bookingStatus: "completed",
+    paymentStatus: "paid",
+    invoiceStatus: "paid",
+    paymentMethod: "netbanking",
+    assignedExecutive: "Rohit Kapoor",
+    notes: "Repeat corporate client.",
+    createdAt: "2026-05-01T11:00:00",
+    updatedAt: "2026-06-19T18:00:00",
+    createdBy: "Rohit Kapoor",
+    updatedBy: "Rohit Kapoor",
+    transactions: [
+      {
+        id: "t1",
+        transactionId: "TXN-870001",
+        method: "netbanking",
+        amount: 100000,
+        reference: "NEFT-ARJUN-01MAY",
+        status: "success",
+        date: "2026-05-01T11:30:00",
+      },
+      {
+        id: "t2",
+        transactionId: "TXN-870220",
+        method: "netbanking",
+        amount: 220000,
+        reference: "NEFT-ARJUN-10JUN",
+        status: "success",
+        date: "2026-06-10T15:00:00",
+      },
+    ],
+    documents: docs({
+      booking_form: { status: "verified", uploadedAt: "2026-05-01T12:00:00", verifiedBy: "Rohit Kapoor", fileName: "corp-form.pdf" },
+      agreement: { status: "verified", uploadedAt: "2026-05-02T10:00:00", verifiedBy: "Rohit Kapoor", fileName: "corp-agreement.pdf" },
+      invoice: { status: "verified", uploadedAt: "2026-06-19T10:00:00", verifiedBy: "Accounts", fileName: "INV-240701.pdf" },
+      customer_id: { status: "verified", uploadedAt: "2026-05-01T12:05:00", verifiedBy: "Rohit Kapoor", fileName: "gst-cert.pdf" },
+    }),
+    timeline: [
+      { id: "tl1", type: "created", title: "Booking Created", description: "Corporate full-day booking.", date: "2026-05-01T11:00:00", actor: "Rohit Kapoor" },
+      { id: "tl2", type: "payment", title: "Payment Received", description: "Full payment completed.", date: "2026-06-10T15:00:00", actor: "System" },
+      { id: "tl3", type: "status", title: "Status Updated", description: "Marked Completed after event.", date: "2026-06-19T18:00:00", actor: "Rohit Kapoor" },
+    ],
+    noteEntries: [{ id: "n1", body: "Client asked for next-quarter availability hold.", author: "Rohit Kapoor", date: "2026-06-19T18:10:00" }],
+  },
+  {
+    id: "4",
+    bookingId: "BK-240830",
+    customerId: "CUST-100128",
+    customerName: "Vikram Singh",
+    customerPhone: "+91 98765 43214",
+    customerEmail: "vikram.singh@email.com",
+    customerCity: "Hyderabad",
+    businessId: "BIZ-300104",
+    businessName: "Singh Palace Events",
+    venueId: "VEN-50004",
+    venueName: "Singh Palace Banquet",
+    venueCity: "Hyderabad",
+    eventType: "Reception",
+    eventDate: "2026-10-05",
+    bookingDate: "2026-07-25",
+    slot: "Full Day",
+    guestCount: 500,
+    specialRequirements: "Royal theme décor, live counter.",
+    bookingAmount: 620000,
+    advancePaid: 0,
+    paidAmount: 0,
+    pendingAmount: 620000,
+    refundAmount: 0,
+    taxAmount: 93600,
+    discountAmount: 0,
+    addons: [],
+    bookingStatus: "draft",
+    paymentStatus: "unpaid",
+    invoiceStatus: "not_generated",
+    paymentMethod: "",
+    assignedExecutive: "Vikram Singh",
+    notes: "Awaiting advance confirmation.",
+    createdAt: "2026-07-25T17:00:00",
+    updatedAt: "2026-07-25T17:00:00",
+    createdBy: "Vikram Singh",
+    updatedBy: "Vikram Singh",
+    transactions: [],
+    documents: defaultDocuments(),
+    timeline: [
+      { id: "tl1", type: "created", title: "Booking Created", description: "Draft reservation saved.", date: "2026-07-25T17:00:00", actor: "Vikram Singh" },
+    ],
+    noteEntries: [],
+  },
+  {
+    id: "5",
+    bookingId: "BK-240615",
+    customerId: "CUST-100129",
+    customerName: "Sneha Nair",
+    customerPhone: "+91 98765 43215",
+    customerEmail: "sneha.nair@email.com",
+    customerCity: "Chennai",
+    businessId: "BIZ-300105",
+    businessName: "Coastal Celebrations LLP",
+    venueId: "VEN-50005",
+    venueName: "Coastal Backwater Resort",
+    venueCity: "Chennai",
+    eventType: "Birthday",
+    eventDate: "2026-06-28",
+    bookingDate: "2026-05-20",
+    slot: "Full Day",
+    guestCount: 120,
+    specialRequirements: "Cake table, outdoor seating.",
+    bookingAmount: 95000,
+    advancePaid: 30000,
+    paidAmount: 30000,
+    pendingAmount: 0,
+    refundAmount: 30000,
+    taxAmount: 14400,
+    discountAmount: 0,
+    addons: [{ id: "a1", name: "Decoration", amount: 12000 }],
+    bookingStatus: "cancelled",
+    paymentStatus: "refunded",
+    invoiceStatus: "generated",
+    paymentMethod: "upi",
+    assignedExecutive: "Sneha Nair",
+    notes: "Cancelled due to venue maintenance clash.",
+    createdAt: "2026-05-20T12:00:00",
+    updatedAt: "2026-06-10T11:00:00",
+    createdBy: "Sneha Nair",
+    updatedBy: "Sneha Nair",
+    transactions: [
+      {
+        id: "t1",
+        transactionId: "TXN-760001",
+        method: "upi",
+        amount: 30000,
+        reference: "UPI-SNEHA-20MAY",
+        status: "success",
+        date: "2026-05-20T12:30:00",
+      },
+      {
+        id: "t2",
+        transactionId: "TXN-760099",
+        method: "upi",
+        amount: 30000,
+        reference: "REFUND-SNEHA-10JUN",
+        status: "refunded",
+        date: "2026-06-10T11:00:00",
+      },
+    ],
+    documents: docs({
+      booking_form: { status: "uploaded", uploadedAt: "2026-05-20T13:00:00", fileName: "bk-240615-form.pdf" },
+    }),
+    timeline: [
+      { id: "tl1", type: "created", title: "Booking Created", description: "Birthday night booking.", date: "2026-05-20T12:00:00", actor: "Sneha Nair" },
+      { id: "tl2", type: "payment", title: "Payment Received", description: "Advance received.", date: "2026-05-20T12:30:00", actor: "System" },
+      { id: "tl3", type: "status", title: "Status Updated", description: "Booking cancelled.", date: "2026-06-10T10:45:00", actor: "Sneha Nair" },
+      { id: "tl4", type: "payment", title: "Payment Received", description: "Advance fully refunded.", date: "2026-06-10T11:00:00", actor: "System" },
+    ],
+    noteEntries: [{ id: "n1", body: "Refund processed same day after cancellation approval.", author: "Sneha Nair", date: "2026-06-10T11:05:00" }],
+  },
+  {
+    id: "6",
+    bookingId: "BK-240902",
+    customerId: "CUST-100127",
+    customerName: "Ananya Iyer",
+    customerPhone: "+91 98765 43213",
+    customerEmail: "ananya.iyer@email.com",
+    customerCity: "Chennai",
+    businessId: "BIZ-300101",
+    businessName: "Orchid Events Pvt Ltd",
+    venueId: "VEN-40012",
+    venueName: "Orchid Rooftop Lounge",
+    venueCity: "Hyderabad",
+    eventType: "Cocktail",
+    eventDate: "2026-08-08",
+    bookingDate: "2026-07-30",
+    slot: "Full Day",
+    guestCount: 90,
+    specialRequirements: "Welcome drinks, lounge seating.",
+    bookingAmount: 140000,
+    advancePaid: 140000,
+    paidAmount: 140000,
+    pendingAmount: 0,
+    refundAmount: 0,
+    taxAmount: 21600,
+    discountAmount: 8000,
+    addons: [{ id: "a1", name: "DJ", amount: 15000 }],
+    bookingStatus: "checked_in",
+    paymentStatus: "paid",
+    invoiceStatus: "paid",
+    paymentMethod: "card",
+    assignedExecutive: "Ananya Iyer",
+    notes: "Guest already on-site for setup.",
+    createdAt: "2026-07-30T08:40:00",
+    updatedAt: "2026-08-08T16:00:00",
+    createdBy: "Ananya Iyer",
+    updatedBy: "Ananya Iyer",
+    transactions: [
+      {
+        id: "t1",
+        transactionId: "TXN-995501",
+        method: "card",
+        amount: 140000,
+        reference: "CARD-****8890",
+        status: "success",
+        date: "2026-07-30T09:00:00",
+      },
+    ],
+    documents: docs({
+      booking_form: { status: "verified", uploadedAt: "2026-07-30T09:20:00", verifiedBy: "Ananya Iyer", fileName: "cocktail-form.pdf" },
+      agreement: { status: "verified", uploadedAt: "2026-07-30T09:25:00", verifiedBy: "Ananya Iyer", fileName: "cocktail-agreement.pdf" },
+      invoice: { status: "verified", uploadedAt: "2026-07-30T10:00:00", verifiedBy: "Accounts", fileName: "INV-240902.pdf" },
+      customer_id: { status: "verified", uploadedAt: "2026-07-30T09:22:00", verifiedBy: "Ananya Iyer", fileName: "id-ananya.pdf" },
+    }),
+    timeline: [
+      { id: "tl1", type: "created", title: "Booking Created", description: "Cocktail booking created.", date: "2026-07-30T08:40:00", actor: "Ananya Iyer" },
+      { id: "tl2", type: "payment", title: "Payment Received", description: "Full amount paid.", date: "2026-07-30T09:00:00", actor: "System" },
+      { id: "tl3", type: "status", title: "Status Updated", description: "Guest checked in.", date: "2026-08-08T16:00:00", actor: "Ananya Iyer" },
+    ],
+    noteEntries: [],
+  },
+  {
+    id: "7",
+    bookingId: "BK-240540",
+    customerId: "CUST-100124",
+    customerName: "Rahul Sharma",
+    customerPhone: "+91 98765 43210",
+    customerEmail: "rahul.sharma@email.com",
+    customerCity: "Hyderabad",
+    businessId: "BIZ-300101",
+    businessName: "Orchid Events Pvt Ltd",
+    venueId: "VEN-40011",
+    venueName: "The Grand Orchid Banquet",
+    venueCity: "Hyderabad",
+    eventType: "Reception",
+    eventDate: "2026-04-12",
+    bookingDate: "2026-02-15",
+    slot: "Full Day",
+    guestCount: 380,
+    specialRequirements: "",
+    bookingAmount: 410000,
+    advancePaid: 100000,
+    paidAmount: 410000,
+    pendingAmount: 0,
+    refundAmount: 25000,
+    taxAmount: 62000,
+    discountAmount: 0,
+    addons: [{ id: "a1", name: "Photography", amount: 25000 }],
+    bookingStatus: "refunded",
+    paymentStatus: "refunded",
+    invoiceStatus: "paid",
+    paymentMethod: "upi",
+    assignedExecutive: "Rohit Kapoor",
+    notes: "Partial refund for cancelled add-on photography package.",
+    createdAt: "2026-02-15T10:00:00",
+    updatedAt: "2026-04-20T12:00:00",
+    createdBy: "Rohit Kapoor",
+    updatedBy: "Rohit Kapoor",
+    transactions: [
+      {
+        id: "t1",
+        transactionId: "TXN-550001",
+        method: "upi",
+        amount: 410000,
+        reference: "UPI-RAHUL-FULL",
+        status: "success",
+        date: "2026-03-01T10:00:00",
+      },
+      {
+        id: "t2",
+        transactionId: "TXN-550088",
+        method: "upi",
+        amount: 25000,
+        reference: "REFUND-PHOTO",
+        status: "refunded",
+        date: "2026-04-20T12:00:00",
+      },
+    ],
+    documents: docs({
+      invoice: { status: "verified", uploadedAt: "2026-03-02T10:00:00", verifiedBy: "Accounts", fileName: "INV-240540.pdf" },
+    }),
+    timeline: [
+      { id: "tl1", type: "created", title: "Booking Created", description: "Reception booking.", date: "2026-02-15T10:00:00", actor: "Rohit Kapoor" },
+      { id: "tl2", type: "payment", title: "Payment Received", description: "Partial refund issued for add-on.", date: "2026-04-20T12:00:00", actor: "System" },
+      { id: "tl3", type: "status", title: "Status Updated", description: "Marked Refunded.", date: "2026-04-20T12:05:00", actor: "Rohit Kapoor" },
+    ],
+    noteEntries: [],
+  },
+  {
+    id: "8",
+    bookingId: "BK-240910",
+    customerId: "CUST-100130",
+    customerName: "Rohan Mehta",
+    customerPhone: "+91 98765 43216",
+    customerEmail: "rohan.mehta@email.com",
+    customerCity: "Bengaluru",
+    businessId: "BIZ-300102",
+    businessName: "Patel Celebrations",
+    venueId: "VEN-50001",
+    venueName: "Patel Grand Celebration Hall",
+    venueCity: "Karimnagar",
+    eventType: "Wedding",
+    eventDate: "2026-11-20",
+    bookingDate: "2026-08-01",
+    slot: "Full Day",
+    guestCount: 600,
+    specialRequirements: "Two mandaps, guest rooms block.",
+    bookingAmount: 780000,
+    advancePaid: 200000,
+    paidAmount: 200000,
+    pendingAmount: 580000,
+    refundAmount: 0,
+    taxAmount: 118000,
+    discountAmount: 25000,
+    addons: [
+      { id: "a1", name: "Decoration", amount: 80000 },
+      { id: "a2", name: "Valet", amount: 15000 },
+    ],
+    bookingStatus: "confirmed",
+    paymentStatus: "partial",
+    invoiceStatus: "sent",
+    paymentMethod: "cheque",
+    assignedExecutive: "Priya Mehta",
+    notes: "",
+    createdAt: "2026-08-01T09:00:00",
+    updatedAt: "2026-08-01T11:00:00",
+    createdBy: "Priya Mehta",
+    updatedBy: "Priya Mehta",
+    transactions: [
+      {
+        id: "t1",
+        transactionId: "TXN-100001",
+        method: "cheque",
+        amount: 200000,
+        reference: "CHQ-778821",
+        status: "success",
+        date: "2026-08-01T10:30:00",
+      },
+    ],
+    documents: docs({
+      booking_form: { status: "uploaded", uploadedAt: "2026-08-01T09:30:00", fileName: "bk-240910-form.pdf" },
+      agreement: { status: "uploaded", uploadedAt: "2026-08-01T09:40:00", fileName: "bk-240910-agreement.pdf" },
+    }),
+    timeline: [
+      { id: "tl1", type: "created", title: "Booking Created", description: "Large wedding booking confirmed pending balance.", date: "2026-08-01T09:00:00", actor: "Priya Mehta" },
+      { id: "tl2", type: "payment", title: "Payment Received", description: "Cheque advance cleared.", date: "2026-08-01T10:30:00", actor: "System" },
+    ],
+    noteEntries: [],
+  },
+];
+
+export function getBookingById(id: string) {
+  return mockBookings.find((b) => b.id === id || b.bookingId === id);
+}
+
+export function addBooking(booking: Booking): Booking {
+  if (!mockBookings.some((b) => b.id === booking.id)) mockBookings.unshift(booking);
+  return booking;
+}
+
+export function createBookingIds() {
+  const n = 240900 + mockBookings.length + Math.floor(Math.random() * 40);
+  return { id: String(Date.now()), bookingId: `BK-${n}` };
+}
+
+export const emptyBookingForm: BookingFormValues = {
+  customerMode: "existing",
+  customerId: "",
+  customerName: "",
+  customerPhone: "",
+  customerEmail: "",
+  customerAddress: "",
+  businessId: "",
+  businessName: "",
+  venueId: "",
+  venueName: "",
+  vendorId: "",
+  vendorName: "",
+  availabilityLabel: "Checking…",
+  slot: "Full Day",
+  slotKey: "full_day",
+  bookingType: "venue_only",
+  pricingMethod: "full_day",
+  foodType: "",
+  foodSlotKey: "",
+  foodSlotKeys: "",
+  mealGuestsJson: "",
+  vegGuestCount: "",
+  nonVegGuestCount: "",
+  startTime: "9 AM",
+  endTime: "11 PM",
+  eventType: "",
+  eventDate: "",
+  eventEndDate: "",
+  selectedDates: "",
+  guestCount: "",
+  specialRequirements: "",
+  bookingAmount: "",
+  advancePaid: "",
+  taxAmount: "",
+  discountAmount: "",
+  paymentMethod: "",
+  transactionReference: "",
+  paymentStatus: "unpaid",
+  bookingStatus: "draft",
+  assignedExecutive: "",
+  notes: "",
+  addonsCsv: "",
+};
+
+export function bookingToFormValues(b: Booking): BookingFormValues {
+  const slotKey = (() => {
+    const s = (b.slot || "").toLowerCase();
+    if (s.includes("morning")) return "morning";
+    if (s.includes("afternoon")) return "afternoon";
+    if (s.includes("evening")) return "evening";
+    if (s.includes("night")) return "night";
+    if (s.includes("full")) return "full_day";
+    return "";
+  })();
+
+  const mealKeys =
+    b.meals && b.meals.length > 0
+      ? b.meals.map((m) => m.slotKey)
+      : parseFoodSlotKeys(undefined, slotKey);
+
+  const mealGuestsJson =
+    b.meals && b.meals.length > 0
+      ? serializeMealGuests(
+          b.meals.map((m) => ({
+            key: m.slotKey,
+            veg: String(m.vegGuests),
+            nonVeg: String(m.nonVegGuests),
+          }))
+        )
+      : "";
+
+  const isVenueFood = Boolean(b.meals?.length);
+
+  return {
+    customerMode: "existing",
+    customerId: b.customerId,
+    customerName: b.customerName,
+    customerPhone: b.customerPhone,
+    customerEmail: b.customerEmail,
+    customerAddress: "",
+    businessId: b.businessId,
+    businessName: b.businessName,
+    venueId: b.venueId,
+    venueName: b.venueName,
+    vendorId: b.vendorId || "",
+    vendorName: b.vendorName || "",
+    availabilityLabel: "Available",
+    slot: b.slot,
+    slotKey: mealKeys.length > 0 ? mealKeys.join(",") : slotKey,
+    bookingType: isVenueFood ? "venue_food" : "venue_only",
+    pricingMethod:
+      isVenueFood || (slotKey && slotKey !== "full_day")
+        ? "slot_based"
+        : "full_day",
+    foodType: "",
+    foodSlotKey: mealKeys[0] || "",
+    foodSlotKeys: mealKeys.join(","),
+    mealGuestsJson,
+    vegGuestCount:
+      b.meals?.[0] != null ? String(b.meals[0].vegGuests) : String(b.guestCount || ""),
+    nonVegGuestCount:
+      b.meals?.[0] != null ? String(b.meals[0].nonVegGuests) : "",
+    startTime: "",
+    endTime: "",
+    eventType: b.eventType,
+    eventDate: b.eventDate,
+    eventEndDate: b.eventEndDate || "",
+    selectedDates: b.selectedDates || "",
+    guestCount: String(b.guestCount || ""),
+    specialRequirements: b.specialRequirements || "",
+    bookingAmount: String(b.bookingAmount || ""),
+    advancePaid: String(b.advancePaid || ""),
+    taxAmount: String(b.taxAmount || ""),
+    discountAmount: String(b.discountAmount || ""),
+    paymentMethod: b.paymentMethod,
+    transactionReference: "",
+    paymentStatus: b.paymentStatus,
+    bookingStatus: b.bookingStatus,
+    assignedExecutive: b.assignedExecutive || "",
+    notes: b.notes || "",
+    addonsCsv: b.addons.map((a) => a.name).join(", "),
+  };
+}
+
+export function blankBooking(overrides: Partial<Booking> = {}): Booking {
+  const now = new Date().toISOString();
+  return {
+    id: "new",
+    bookingId: "BK-NEW",
+    customerId: "",
+    customerName: "",
+    customerPhone: "",
+    customerEmail: "",
+    customerCity: "",
+    businessId: "",
+    businessName: "",
+    venueId: "",
+    venueName: "",
+    venueCity: "",
+    vendorId: "",
+    vendorName: "",
+    eventType: "",
+    eventDate: "",
+    bookingDate: now.slice(0, 10),
+    slot: "",
+    guestCount: 0,
+    specialRequirements: "",
+    bookingAmount: 0,
+    advancePaid: 0,
+    paidAmount: 0,
+    pendingAmount: 0,
+    refundAmount: 0,
+    taxAmount: 0,
+    discountAmount: 0,
+    addons: [],
+    bookingStatus: "draft",
+    paymentStatus: "unpaid",
+    invoiceStatus: "not_generated" as InvoiceStatus,
+    paymentMethod: "",
+    assignedExecutive: "",
+    notes: "",
+    createdAt: now,
+    updatedAt: now,
+    createdBy: "Admin",
+    updatedBy: "Admin",
+    transactions: [],
+    invoices: [],
+    documents: defaultDocuments(),
+    timeline: [],
+    noteEntries: [],
+    ...overrides,
+  };
+}
+
+export function computePending(bookingAmount: number, paidAmount: number) {
+  return Math.max(0, bookingAmount - paidAmount);
+}
+
+export function statusLabel(status: BookingStatus | PaymentStatus | string) {
+  return String(status || "").replace(/_/g, " ");
+}

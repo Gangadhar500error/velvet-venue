@@ -1,0 +1,400 @@
+/* ============================================================
+   VelvetVenues Admin — Enterprise Dark Theme
+   Scoped to html.dark .vv-admin — light theme unchanged
+   ============================================================ */
+
+html.dark {
+  color-scheme: dark;
+
+  --vv-primary: #C89B3C;
+  --vv-primary-hover: #B8862B;
+  --vv-primary-light: rgba(200, 155, 60, 0.12);
+  --vv-bg: #0F172A;
+  --vv-bg-secondary: #111827;
+  --vv-card: #1E293B;
+  --vv-card-elevated: #243244;
+  --vv-border: #334155;
+  --vv-heading: #F8FAFC;
+  --vv-body: #CBD5E1;
+  --vv-muted: #94A3B8;
+  --vv-success: #22C55E;
+  --vv-success-light: rgba(34, 197, 94, 0.15);
+  --vv-warning: #C89B3C;
+  --vv-warning-light: rgba(193, 151, 93, 0.15);
+  --vv-danger: #EF4444;
+  --vv-danger-light: rgba(239, 68, 68, 0.15);
+  --vv-info: #C89B3C;
+  --vv-info-light: rgba(193, 151, 93, 0.15);
+  --vv-shadow: 0 12px 35px rgba(200, 155, 60, 0.25);
+  --vv-shadow-hover: 0 10px 30px rgba(193, 151, 93, 0.2);
+}
+
+/* ---- Shell & scrollbars ---- */
+html.dark .vv-admin main {
+  background-color: #0F172A !important;
+}
+
+html.dark .vv-admin-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: #475569 transparent;
+}
+
+html.dark .vv-admin-scroll::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+html.dark .vv-admin-scroll::-webkit-scrollbar-thumb {
+  background: #475569;
+  border-radius: 999px;
+}
+
+html.dark .vv-admin-scroll::-webkit-scrollbar-thumb:hover {
+  background: #C89B3C;
+}
+
+/* ---- Surfaces: cards, panels, modals ---- */
+html.dark .vv-admin .bg-white,
+html.dark .vv-admin [class*="bg-white"]:not([class*="bg-white/"]):not([class*="from-"]):not([class*="to-"]) {
+  background-color: #1E293B !important;
+}
+
+html.dark .vv-admin [class*="bg-white/90"],
+html.dark .vv-admin [class*="bg-white/95"] {
+  background-color: rgba(30, 41, 59, 0.95) !important;
+}
+
+html.dark .vv-admin .vv-surface {
+  background: #1E293B !important;
+  border-color: #334155 !important;
+  box-shadow: var(--vv-shadow) !important;
+}
+
+html.dark .vv-admin [class*="bg-[#F8FAFC]"],
+html.dark .vv-admin [class*="bg-[#F8F9FB]"],
+html.dark .vv-admin [class*="bg-[#F9FAFB]"],
+html.dark .vv-admin [class*="bg-[#FCFCFD]"],
+html.dark .vv-admin [class*="bg-[#FAFAFA]"] {
+  background-color: #111827 !important;
+}
+
+html.dark .vv-admin [class*="bg-[#F3F4F6]"],
+html.dark .vv-admin [class*="bg-[#E5E7EB]"],
+html.dark .vv-admin [class*="bg-[#F1F5F9]"],
+html.dark .vv-admin [class*="bg-[#EEF2F7]"] {
+  background-color: #243244 !important;
+}
+
+/* Light tinted backgrounds → dark tinted */
+html.dark .vv-admin [class*="bg-[#FCFAF8]"],
+html.dark .vv-admin [class*="bg-[#FFF3EB]"],
+html.dark .vv-admin [class*="bg-[#FFFBF7]"],
+html.dark .vv-admin [class*="bg-[#FFF8F3]"],
+html.dark .vv-admin [class*="bg-[#FFF4ED]"] {
+  background-color: rgba(200, 155, 60, 0.12) !important;
+}
+
+html.dark .vv-admin [class*="bg-[#ECFDF3]"],
+html.dark .vv-admin [class*="bg-[#F0FDF4]"],
+html.dark .vv-admin [class*="bg-[#F0FDFA]"] {
+  background-color: rgba(34, 197, 94, 0.12) !important;
+}
+
+html.dark .vv-admin [class*="bg-[#EFF6FF]"],
+html.dark .vv-admin [class*="bg-[#DBEAFE]"] {
+  background-color: rgba(59, 130, 246, 0.12) !important;
+}
+
+html.dark .vv-admin [class*="bg-[#F5F3FF]"],
+html.dark .vv-admin [class*="bg-[#EDE9FE]"] {
+  background-color: rgba(139, 92, 246, 0.12) !important;
+}
+
+html.dark .vv-admin [class*="bg-[#FEF2F2]"],
+html.dark .vv-admin [class*="bg-[#FEE2E2]"] {
+  background-color: rgba(239, 68, 68, 0.12) !important;
+}
+
+/* Gradient cards (dashboard KPIs etc.) */
+html.dark .vv-admin [class*="from-[#ECFDF3]"],
+html.dark .vv-admin [class*="from-[#FCFAF8]"],
+html.dark .vv-admin [class*="from-[#EFF6FF]"],
+html.dark .vv-admin [class*="from-[#F5F3FF]"],
+html.dark .vv-admin [class*="from-[#FEF2F2]"],
+html.dark .vv-admin [class*="from-[#F0FDFA]"],
+html.dark .vv-admin [class*="from-[#F0FDF4]"] {
+  --tw-gradient-from: #1E293B var(--tw-gradient-from-position) !important;
+  --tw-gradient-to: rgb(30 41 59 / 0) var(--tw-gradient-to-position) !important;
+  --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to) !important;
+}
+
+html.dark .vv-admin [class*="to-white"] {
+  --tw-gradient-to: #243244 var(--tw-gradient-to-position) !important;
+}
+
+/* ---- Typography ---- */
+html.dark .vv-admin [class*="text-[#111827]"],
+html.dark .vv-admin [class*="text-[#0F172A]"],
+html.dark .vv-admin [class*="text-[#1F2937]"] {
+  color: #F8FAFC !important;
+}
+
+html.dark .vv-admin [class*="text-[#374151]"],
+html.dark .vv-admin [class*="text-[#4B5563]"],
+html.dark .vv-admin [class*="text-[#64748B]"] {
+  color: #CBD5E1 !important;
+}
+
+html.dark .vv-admin [class*="text-[#6B7280]"],
+html.dark .vv-admin [class*="text-[#9CA3AF]"],
+html.dark .vv-admin [class*="text-[#94A3B8]"] {
+  color: #94A3B8 !important;
+}
+
+/* Preserve accent / status text colors */
+html.dark .vv-admin [class*="text-[#C89B3C]"],
+html.dark .vv-admin [class*="text-[#C89B3C]"],
+html.dark .vv-admin [class*="text-[#B8862B]"],
+html.dark .vv-admin [class*="text-[#FB923C]"],
+html.dark .vv-admin [class*="text-[#16A34A]"],
+html.dark .vv-admin [class*="text-[#22C55E]"],
+html.dark .vv-admin [class*="text-[#DC2626]"],
+html.dark .vv-admin [class*="text-[#EF4444]"],
+html.dark .vv-admin [class*="text-[#2563EB]"],
+html.dark .vv-admin [class*="text-[#3B82F6]"],
+html.dark .vv-admin [class*="text-[#7C3AED]"],
+html.dark .vv-admin [class*="text-[#8B5CF6]"],
+html.dark .vv-admin [class*="text-[#F59E0B]"],
+html.dark .vv-admin [class*="text-[#0D9488]"],
+html.dark .vv-admin [class*="text-white"] {
+  /* keep original */
+}
+
+/* ---- Borders ---- */
+html.dark .vv-admin [class*="border-[#E8EAF0]"],
+html.dark .vv-admin [class*="border-[#E8EBEF]"],
+html.dark .vv-admin [class*="border-[#E5E7EB]"],
+html.dark .vv-admin [class*="border-[#ECEEF2]"],
+html.dark .vv-admin [class*="border-[#F1F5F9]"],
+html.dark .vv-admin [class*="border-[#EEF2F7]"],
+html.dark .vv-admin [class*="border-[#D1D5DB]"] {
+  border-color: #334155 !important;
+}
+
+html.dark .vv-admin [class*="border-[#BFDBFE]"]:hover,
+html.dark .vv-admin [class*="hover:border-[#BFDBFE]"]:hover {
+  border-color: rgba(200, 155, 60, 0.45) !important;
+}
+
+/* ---- Form controls ---- */
+html.dark .vv-admin input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+html.dark .vv-admin textarea,
+html.dark .vv-admin select {
+  background-color: #1E293B !important;
+  border-color: #334155 !important;
+  color: #F8FAFC !important;
+}
+
+html.dark .vv-admin input::placeholder,
+html.dark .vv-admin textarea::placeholder {
+  color: #64748B !important;
+}
+
+html.dark .vv-admin input:focus,
+html.dark .vv-admin textarea:focus,
+html.dark .vv-admin select:focus {
+  border-color: #C89B3C !important;
+  box-shadow: 0 0 0 2px rgba(200, 155, 60, 0.25) !important;
+}
+
+html.dark .vv-admin input:read-only,
+html.dark .vv-admin input[disabled],
+html.dark .vv-admin select:disabled {
+  background-color: #111827 !important;
+  color: #94A3B8 !important;
+}
+
+/* ---- Tables ---- */
+html.dark .vv-admin table thead,
+html.dark .vv-admin table thead tr,
+html.dark .vv-admin table thead th {
+  background-color: #243244 !important;
+}
+
+html.dark .vv-admin table tbody tr:nth-child(even) {
+  background-color: rgba(17, 24, 39, 0.45) !important;
+}
+
+html.dark .vv-admin table tbody tr:hover {
+  background-color: rgba(200, 155, 60, 0.08) !important;
+}
+
+/* ---- Shadows & hover elevation ---- */
+html.dark .vv-admin [class*="shadow-sm"],
+html.dark .vv-admin [class*="shadow-[0_1px"] {
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35) !important;
+}
+
+html.dark .vv-admin [class*="hover:shadow"],
+html.dark .vv-admin [class*="hover:shadow-md"]:hover,
+html.dark .vv-admin [class*="hover:shadow-lg"]:hover {
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45) !important;
+}
+
+/* ---- Status badges (improve contrast) ---- */
+html.dark .vv-admin [class*="bg-[#ECFDF3]"][class*="text-[#16A34A]"] {
+  background-color: rgba(34, 197, 94, 0.18) !important;
+  color: #4ADE80 !important;
+  border-color: rgba(34, 197, 94, 0.35) !important;
+}
+
+html.dark .vv-admin [class*="bg-[#FCFAF8]"][class*="text-[#F59E0B]"],
+html.dark .vv-admin [class*="bg-[#FCFAF8]"][class*="text-[#B8862B]"] {
+  background-color: rgba(245, 158, 11, 0.18) !important;
+  color: #FBBF24 !important;
+  border-color: rgba(245, 158, 11, 0.35) !important;
+}
+
+html.dark .vv-admin [class*="bg-[#FEF2F2]"][class*="text-[#DC2626]"] {
+  background-color: rgba(239, 68, 68, 0.18) !important;
+  color: #F87171 !important;
+  border-color: rgba(239, 68, 68, 0.35) !important;
+}
+
+html.dark .vv-admin [class*="bg-[#EFF6FF]"][class*="text-[#2563EB]"] {
+  background-color: rgba(59, 130, 246, 0.18) !important;
+  color: #60A5FA !important;
+  border-color: rgba(59, 130, 246, 0.35) !important;
+}
+
+html.dark .vv-admin [class*="bg-[#F5F3FF]"][class*="text-[#7C3AED]"] {
+  background-color: rgba(139, 92, 246, 0.18) !important;
+  color: #A78BFA !important;
+  border-color: rgba(139, 92, 246, 0.35) !important;
+}
+
+html.dark .vv-admin [class*="bg-[#F3F4F6]"][class*="text-[#4B5563]"],
+html.dark .vv-admin [class*="bg-[#F3F4F6]"][class*="text-[#6B7280]"] {
+  background-color: rgba(148, 163, 184, 0.15) !important;
+  color: #CBD5E1 !important;
+  border-color: #475569 !important;
+}
+
+/* ---- Modals & dropdowns backdrop ---- */
+html.dark .vv-admin [class*="backdrop-blur"] {
+  backdrop-filter: blur(8px);
+}
+
+/* ---- Skeleton loaders ---- */
+html.dark .vv-admin .animate-pulse [class*="bg-[#F3F4F6]"],
+html.dark .vv-admin .animate-pulse [class*="bg-gray-"] {
+  background-color: #243244 !important;
+}
+
+/* ---- Page transitions ---- */
+html.dark .vv-admin .animate-fadeIn {
+  animation-duration: 0.15s;
+}
+
+/* ---- Navbar dark (when not using isDarkMode inline classes) ---- */
+html.dark .vv-admin nav[class*="border-b"] {
+  background-color: #111827 !important;
+  border-color: #334155 !important;
+}
+
+/* ---- Hover states on rows/cards ---- */
+html.dark .vv-admin [class*="hover:bg-[#F8FAFC]"]:hover,
+html.dark .vv-admin [class*="hover:bg-[#F8F9FB]"]:hover,
+html.dark .vv-admin [class*="hover:bg-[#FFFBF7]"]:hover,
+html.dark .vv-admin [class*="hover:bg-[#FFF8F3]"]:hover {
+  background-color: rgba(200, 155, 60, 0.08) !important;
+}
+
+html.dark .vv-admin [class*="hover:bg-[#F0FDFA]"]:hover {
+  background-color: rgba(13, 148, 136, 0.12) !important;
+}
+
+/* ---- Dividers ---- */
+html.dark .vv-admin [class*="divide-[#F1F5F9]"] > * + *,
+html.dark .vv-admin [class*="divide-[#E8EAF0]"] > * + * {
+  border-color: #334155 !important;
+}
+
+/* ---- Ring offset for focus ---- */
+html.dark .vv-admin [class*="ring-offset-1"] {
+  --tw-ring-offset-color: #0F172A;
+}
+
+/* ---- Calendar / date cells ---- */
+html.dark .vv-admin [class*="ring-white"] {
+  --tw-ring-color: #1E293B !important;
+}
+
+/* ---- Progress bars track ---- */
+html.dark .vv-admin [class*="bg-[#E5E7EB]"] {
+  background-color: #334155 !important;
+}
+
+/* ---- Empty illustration containers ---- */
+html.dark .vv-admin [class*="bg-[#FFF4ED]"] {
+  background-color: rgba(200, 155, 60, 0.15) !important;
+}
+
+/* ---- Sticky footer bars ---- */
+html.dark .vv-admin [class*="backdrop-blur"][class*="bg-white"] {
+  background-color: rgba(30, 41, 59, 0.92) !important;
+  border-color: #334155 !important;
+}
+
+/* ---- Secondary buttons on white ---- */
+html.dark .vv-admin button[class*="bg-white"]:not([class*="bg-[#FF"]):not([class*="bg-[#DC"]):not([class*="bg-[#16"]) {
+  background-color: #243244 !important;
+  color: #CBD5E1 !important;
+  border-color: #334155 !important;
+}
+
+html.dark .vv-admin button[class*="bg-white"]:hover:not([class*="bg-[#FF"]):not([class*="bg-[#DC"]) {
+  background-color: #334155 !important;
+}
+
+/* ---- Links hover ---- */
+html.dark .vv-admin a[class*="hover:text-[#C89B3C]"]:hover,
+html.dark .vv-admin a[class*="hover:text-[#C89B3C]"]:hover {
+  color: #FB923C !important;
+}
+
+/* ---- Image/logo areas unchanged ---- */
+
+/* ---- Gray scale utility overrides inside admin ---- */
+html.dark .vv-admin .bg-gray-950 {
+  background-color: #0F172A !important;
+}
+
+html.dark .vv-admin .bg-gray-900 {
+  background-color: #111827 !important;
+}
+
+html.dark .vv-admin .bg-gray-800 {
+  background-color: #1E293B !important;
+}
+
+html.dark .vv-admin .border-gray-800,
+html.dark .vv-admin .border-gray-700 {
+  border-color: #334155 !important;
+}
+
+html.dark .vv-admin .text-gray-300 {
+  color: #CBD5E1 !important;
+}
+
+html.dark .vv-admin .text-gray-400 {
+  color: #94A3B8 !important;
+}
+
+html.dark .vv-admin .hover\:bg-gray-800:hover {
+  background-color: #243244 !important;
+}
+
+html.dark .vv-admin .hover\:bg-white\/\[0\.06\]:hover {
+  background-color: rgba(255, 255, 255, 0.06) !important;
+}

@@ -1,0 +1,63 @@
+@theme {
+  /* VelvetVenues — orange-* utilities map to Primary Luxury Gold */
+  --color-orange-50:  #FFFDF8;
+  --color-orange-100: #F7E8C5; /* Light Gold */
+  --color-orange-200: #EFD9A0;
+  --color-orange-300: #E0C06E;
+  --color-orange-400: #D4AD4F;
+  --color-orange-500: #C89B3C; /* Primary Gold */
+  --color-orange-600: #B8862B; /* Gold Hover */
+  --color-orange-700: #9A6F22;
+  --color-orange-800: #7A581B;
+  --color-orange-900: #5A4014;
+
+  /* Gold scale aliases */
+  --color-amber-50:  #FFFDF8;
+  --color-amber-100: #F7E8C5;
+  --color-amber-200: #EFD9A0;
+  --color-amber-300: #E0C06E;
+  --color-amber-400: #C89B3C;
+  --color-amber-500: #C89B3C;
+  --color-amber-600: #B8862B;
+  --color-amber-700: #9A6F22;
+  --color-amber-800: #7A581B;
+  --color-amber-900: #5A4014;
+
+  /* Yellow accents → Gold */
+  --color-yellow-400: #C89B3C;
+  --color-yellow-500: #C89B3C;
+  --color-yellow-600: #B8862B;
+
+  /* Teal/cyan leftovers → Gold */
+  --color-teal-400: #C89B3C;
+  --color-teal-500: #C89B3C;
+  --color-teal-600: #B8862B;
+  --color-cyan-400: #C89B3C;
+  --color-cyan-500: #C89B3C;
+  --color-cyan-600: #B8862B;
+
+  /* Purple leftovers → soft gold */
+  --color-purple-50:  #FFFDF8;
+  --color-purple-100: #F7E8C5;
+  --color-purple-200: #EFD9A0;
+  --color-purple-300: #E0C06E;
+  --color-purple-400: #C89B3C;
+  --color-purple-500: #B8862B;
+  --color-purple-600: #B8862B;
+  --color-purple-700: #9A6F22;
+  --color-purple-800: #7A581B;
+  --color-purple-900: #5A4014;
+
+  /* Brand tokens */
+  --color-gold: #C89B3C;
+  --color-gold-hover: #B8862B;
+  --color-gold-light: #F7E8C5;
+  --color-burgundy: #6A1830;
+  --color-burgundy-hover: #81213C;
+  --color-vv-section: #FCFAF8;
+  --color-vv-section-alt: #FFFDF8;
+  --color-vv-heading: #222222;
+  --color-vv-body: #555555;
+  --color-vv-muted: #888888;
+  --color-vv-border: #ECE7E1;
+}

@@ -1,0 +1,216 @@
+@import "tailwindcss";
+@import "../styles/theme.css";
+@import "./admin/admin-dark-theme.css";
+
+/* ---------------------------------------------------
+   FONT IMPORTS
+   (Order matters: heading font first, body font second)
+---------------------------------------------------- */
+@import url('https://www-static.wework.com/apercu/apercu.css');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+
+/* ---------------------------------------------------
+   GLOBAL FONT VARIABLES
+---------------------------------------------------- */
+:root {
+  --font-body: "Apercu", sans-serif;
+  /* --font-heading is set by Next.js font optimization via Roboto_Condensed */
+
+  --background: #ffffff;
+  --foreground: #171717;
+
+  /* VelvetVenues Design System — Gold primary, Burgundy accent */
+  --vv-primary: #C89B3C;
+  --vv-primary-hover: #B8862B;
+  --vv-primary-light: #F7E8C5;
+  --vv-gold: #C89B3C;
+  --vv-gold-hover: #B8862B;
+  --vv-gold-light: #F7E8C5;
+  --vv-burgundy: #6A1830;
+  --vv-burgundy-hover: #81213C;
+  --vv-bg: #FCFAF8;
+  --vv-bg-alt: #FFFDF8;
+  --vv-card: #FFFFFF;
+  --vv-border: #ECE7E1;
+  --vv-heading: #222222;
+  --vv-body: #555555;
+  --vv-muted: #888888;
+  --vv-success: #16A34A;
+  --vv-success-light: #ECFDF3;
+  --vv-warning: #C89B3C;
+  --vv-warning-light: #F7E8C5;
+  --vv-danger: #DC2626;
+  --vv-danger-light: #FEF2F2;
+  --vv-info: #C89B3C;
+  --vv-info-light: #F7E8C5;
+  --vv-radius: 18px;
+  --vv-radius-sm: 12px;
+  --vv-shadow: 0 12px 35px rgba(200, 155, 60, 0.15);
+  --vv-shadow-hover: 0 10px 30px rgba(193, 151, 93, 0.12);
+  --vv-footer: #1B2230;
+}
+
+
+/* ---------------------------------------------------
+   BASE TYPOGRAPHY
+---------------------------------------------------- */
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  font-family: var(--font-body);
+  background: var(--background);
+  color: var(--foreground);
+}
+
+/* Apply body font everywhere except headings */
+p, a, span, div, li, button, input, textarea, select, label, table, th, td {
+  font-family: var(--font-body);
+}
+
+/* Headings always use Roboto Condensed */
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-heading);
+  font-weight: 700;
+  font-style: normal;
+}
+
+/* Ensure nested spans inside headings still use heading font */
+h1 *, h2 *, h3 *, h4 *, h5 *, h6 * {
+  font-family: inherit;
+}
+
+
+/* ---------------------------------------------------
+   UTILITY CLASSES & GLOBAL UI STYLES
+---------------------------------------------------- */
+
+/* Animation: Fade In */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-fadeIn {
+  animation: fadeIn 0.6s ease-out forwards;
+}
+
+/* Animated Gradient Text */
+@keyframes gradientShift {
+  0% { background-position: 0% 50%; }
+  100% { background-position: 200% 50%; }
+}
+.text-gradient-animate {
+  background: linear-gradient(
+    90deg,
+    #222222 0%,
+    #222222 12%,
+    #B8862B 28%,
+    #C89B3C 42%,
+    #F7E8C5 55%,
+    #C89B3C 68%,
+    #B8862B 82%,
+    #222222 92%,
+    #222222 100%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  color: transparent;
+  animation: gradientShift 8s ease-in-out infinite;
+}
+
+@keyframes heroSearchFadeUp {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes filterChipIn {
+  from { opacity: 0; transform: translateY(6px) scale(0.96); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* Custom container width */
+.container-custom {
+  width: 100%;
+  max-width: 1440px;
+  margin-left: auto;
+  margin-right: auto;
+}
+@media (max-width: 520px) {
+  .container-custom { padding: 0 0.5rem; }
+}
+
+/* Hide Scrollbar */
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
+/* Line Clamp */
+.line-clamp-1, .line-clamp-2, .line-clamp-3 {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.line-clamp-1 { -webkit-line-clamp: 1; }
+.line-clamp-2 { -webkit-line-clamp: 2; }
+.line-clamp-3 { -webkit-line-clamp: 3; }
+
+/* Focus Accessibility — single ring only.
+   Form controls use component-level border/ring styles;
+   keep outline for keyboard focus on links & plain controls. */
+:focus-visible {
+  outline: 2px solid #C89B3C;
+  outline-offset: 2px;
+}
+
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+button:focus-visible,
+[role="combobox"]:focus-visible,
+[role="listbox"]:focus-visible,
+[role="option"]:focus-visible,
+[contenteditable="true"]:focus-visible {
+  outline: none;
+  outline-offset: 0;
+}
+
+/* VelvetVenues Admin shell typography */
+.vv-admin,
+.vv-admin * {
+  font-family: Inter, system-ui, -apple-system, sans-serif;
+}
+
+/* Premium admin surface polish — visual only */
+.vv-admin main {
+  background-color: #FCFAF8;
+}
+
+.vv-admin .vv-surface {
+  background: #FFFFFF;
+  border: 1px solid #ECE7E1;
+  border-radius: 18px;
+  box-shadow: 0 12px 35px rgba(200, 155, 60, 0.15);
+}
+
+/* Soften legacy card radii/borders inside admin without layout changes */
+.vv-admin [class*="rounded-[14px"] {
+  border-radius: 18px;
+}
+
+.vv-admin [class*="E8EAF0"] {
+  border-color: #E8EBEF;
+}
+
+.vv-admin [class*="F8F9FB"] {
+  background-color: #F8FAFC;
+}
+
+/* Dark Mode Support */
+html.dark { color-scheme: dark; }
+html.light { color-scheme: light; }
