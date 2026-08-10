@@ -32,6 +32,28 @@ def public_upload_url(relative_path: str) -> str:
     return f"{base}/{relative_path.lstrip('/')}"
 
 
+def venue_upload_dir(venue_id: uuid.UUID) -> Path:
+    path = uploads_root() / "venues" / str(venue_id)
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+async def save_venue_upload_file(
+    *,
+    venue_id: uuid.UUID,
+    upload: UploadFile,
+    document_type: str,
+) -> tuple[str, str, str, str | None]:
+    original = upload.filename or f"{document_type}.bin"
+    safe = SAFE_NAME_RE.sub("_", original).strip("._") or "document.bin"
+    stored_name = f"{uuid.uuid4().hex}_{safe}"
+    dest = venue_upload_dir(venue_id) / stored_name
+    content = await upload.read()
+    dest.write_bytes(content)
+    relative = f"venues/{venue_id}/{stored_name}"
+    return safe, _format_size(len(content)), public_upload_url(relative), upload.content_type
+
+
 async def save_upload_file(
     *,
     profile_id: uuid.UUID,

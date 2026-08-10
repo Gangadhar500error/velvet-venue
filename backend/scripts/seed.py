@@ -14,6 +14,7 @@ from scripts.seed_business_profiles import seed_business_profiles
 from scripts.seed_customers import seed_customers
 from scripts.seed_permissions import run_rbac_seed
 from scripts.seed_venue_owners import seed_venue_owners
+from scripts.seed_venues import seed_venues
 
 logger = get_logger(__name__)
 
@@ -98,6 +99,7 @@ async def run_seed() -> None:
             await seed_customers(session)
             await seed_venue_owners(session)
             await seed_business_profiles(session)
+            await seed_venues(session)
             await session.commit()
             logger.info("Database seed completed successfully")
         except Exception:

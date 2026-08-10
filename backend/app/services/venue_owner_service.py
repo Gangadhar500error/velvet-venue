@@ -16,6 +16,7 @@ from app.repositories.role_repository import RoleRepository
 from app.repositories.user_repository import UserRepository
 from app.repositories.venue_owner_repository import VenueOwnerRepository
 from app.repositories.business_profile_repository import BusinessProfileRepository
+from app.repositories.venue_repository import VenueRepository
 from app.schemas.venue_owner import (
     VenueOwnerCreateRequest,
     VenueOwnerDetailResponse,
@@ -26,6 +27,7 @@ from app.schemas.venue_owner import (
     VenueOwnerUpdateRequest,
     MessageResponse,
     BusinessProfileSummary,
+    VenueSummary,
     _initials,
     _split_name,
 )
@@ -40,6 +42,7 @@ class VenueOwnerService:
         self.roles = RoleRepository(db)
         self.permissions = PermissionService(db)
         self.business_profiles = BusinessProfileRepository(db)
+        self.venues_repo = VenueRepository(db)
 
     def _assert_access(self, actor: User, owner: VenueOwner) -> None:
         scope = self.permissions.get_data_scope(actor)
@@ -70,9 +73,10 @@ class VenueOwnerService:
 
     async def _compute_overview(self, owner: VenueOwner) -> VenueOwnerOverview:
         bp_count = await self.business_profiles.count_by_venue_owner(owner.id)
+        venues_count = await self.venues_repo.count_by_venue_owner(owner.id)
         return VenueOwnerOverview(
             business_profiles_count=bp_count,
-            venues_count=0,
+            venues_count=venues_count,
             total_bookings=0,
             revenue=0.0,
             pending_payments=0.0,
@@ -81,7 +85,9 @@ class VenueOwnerService:
             verification_status=owner.verification_status,
         )
 
-    def _to_list_item(self, owner: VenueOwner, business_profiles_count: int = 0) -> VenueOwnerListItem:
+    def _to_list_item(
+        self, owner: VenueOwner, business_profiles_count: int = 0, venues_count: int = 0
+    ) -> VenueOwnerListItem:
         return VenueOwnerListItem(
             id=owner.id,
             owner_code=owner.owner_code,
@@ -100,7 +106,7 @@ class VenueOwnerService:
             profile_image=owner.profile_image,
             created_at=owner.created_at,
             business_profiles_count=business_profiles_count,
-            venues_count=0,
+            venues_count=venues_count,
             bookings_count=0,
             revenue=0.0,
             initials=_initials(owner.full_name),
@@ -111,6 +117,7 @@ class VenueOwnerService:
     ) -> VenueOwnerDetailResponse:
         overview = await self._compute_overview(owner)
         profiles = await self.business_profiles.list_by_venue_owner(owner.id, limit=20)
+        venues = await self.venues_repo.list_by_venue_owner(owner.id, limit=20)
         return VenueOwnerDetailResponse(
             id=owner.id,
             owner_code=owner.owner_code,
@@ -157,7 +164,17 @@ class VenueOwnerService:
                 )
                 for p in profiles
             ],
-            venues=[],
+            venues=[
+                VenueSummary(
+                    id=v.id,
+                    name=v.venue_name,
+                    venue_type=v.venue_type,
+                    capacity=v.seating_capacity,
+                    city=v.city,
+                    status=v.venue_status,
+                )
+                for v in venues
+            ],
             recent_bookings=[],
             existed=existed,
         )
@@ -284,7 +301,14 @@ class VenueOwnerService:
         items = []
         for owner in rows:
             bp_count = await self.business_profiles.count_by_venue_owner(owner.id)
-            items.append(self._to_list_item(owner, business_profiles_count=bp_count))
+            venues_count = await self.venues_repo.count_by_venue_owner(owner.id)
+            items.append(
+                self._to_list_item(
+                    owner,
+                    business_profiles_count=bp_count,
+                    venues_count=venues_count,
+                )
+            )
         total_pages = max(1, math.ceil(total / page_size)) if page_size else 1
         return VenueOwnerListResponse(
             items=items,

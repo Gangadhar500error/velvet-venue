@@ -5,6 +5,7 @@ from app.api.v1.business_profiles.routes import router as business_profiles_rout
 from app.api.v1.customers.routes import router as customers_router
 from app.api.v1.rbac.routes import router as rbac_router
 from app.api.v1.venue_owners.routes import router as venue_owners_router
+from app.api.v1.venues.routes import router as venues_router
 from app.core.config import get_settings
 
 settings = get_settings()
@@ -13,6 +14,7 @@ router.include_router(auth_router)
 router.include_router(customers_router)
 router.include_router(venue_owners_router)
 router.include_router(business_profiles_router)
+router.include_router(venues_router)
 router.include_router(rbac_router)
 
 

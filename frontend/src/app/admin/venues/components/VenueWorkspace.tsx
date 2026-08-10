@@ -44,31 +44,32 @@ import {
 } from "../types";
 import {
   amenityOptions,
-  businessOptions,
   categoryOptions,
   cityOptions,
   eventCategoryOptions,
   formatCurrency,
   formatDate,
   formatDateTime,
-  getBusinessOption,
   venueTypeOptions,
+  type BusinessOption,
 } from "../data";
 import { DocumentsManager } from "./DocumentsManager";
 import { PricingBookingRules } from "./PricingBookingRules";
 import { AdditionalServicesCatalog } from "./AdditionalServicesCatalog";
 import { VenueAvailabilityPanel } from "./VenueAvailabilityPanel";
 import { notify, toast } from "../../_components/ui/Toast";
-import { useDemoStore } from "../../store/demoStore";
 import {
   RelationCard,
   RelatedBookingsTable,
   RelatedInvoicesTable,
   ViewAllButton,
-  bookingsForVenue,
   flattenInvoices,
 } from "../../_components/relations";
 import { EntityViewLayout } from "../../_components/layout/EntityViewLayout";
+import { fetchBusinessProfiles, mapBusinessProfileListItem } from "@/lib/business-profiles";
+import { fetchVenueMeta } from "@/lib/venues";
+import type { Booking } from "../../bookings/types";
+import type { AmenityOption } from "../data";
 
 type TabKey = "overview" | "gallery" | "availability" | "pricing" | "reviews" | "documents";
 type CreateTabKey = "overview" | "pricing" | "gallery" | "documents";
@@ -91,6 +92,8 @@ interface VenueWorkspaceProps {
   onChange?: <K extends keyof VenueFormValues>(key: K, value: VenueFormValues[K]) => void;
   documents?: VenueDocument[];
   onDocumentsChange?: (documents: VenueDocument[]) => void;
+  onCoverImageChange?: (url: string) => void;
+  onGalleryImagesChange?: (urls: string[]) => void;
   onEdit?: () => void;
   onCancel?: () => void;
   onSave?: () => void;
@@ -175,6 +178,8 @@ export function VenueWorkspace({
   onChange,
   documents: documentsProp,
   onDocumentsChange,
+  onCoverImageChange,
+  onGalleryImagesChange,
   onEdit,
   onCancel,
   onSave,
@@ -186,16 +191,9 @@ export function VenueWorkspace({
   initialTab,
 }: VenueWorkspaceProps) {
   const router = useRouter();
-  const patchAvailabilityDay = useDemoStore((s) => s.patchAvailabilityDay);
-  const setVenueAvailability = useDemoStore((s) => s.setVenueAvailability);
-  const businesses = useDemoStore((s) => s.businesses);
-  const storeVenue = useDemoStore((s) =>
-    mode !== "create" ? s.venues.find((v) => v.id === venue.id || v.venueId === venue.venueId) : undefined
-  );
-  const activeBusinesses = useMemo(
-    () => businesses.filter((b) => String(b.status || "").toLowerCase() !== "inactive"),
-    [businesses]
-  );
+  const [businessOptionsLive, setBusinessOptionsLive] = useState<BusinessOption[]>([]);
+  const [amenityOptionsLive, setAmenityOptionsLive] = useState<AmenityOption[]>(amenityOptions);
+  const [eventCategoryOptionsLive, setEventCategoryOptionsLive] = useState(eventCategoryOptions);
   const editable = (mode === "edit" || mode === "create") && !!form && !!onChange;
   const isCreate = mode === "create";
   const [tab, setTab] = useState<TabKey>(initialTab || "overview");
@@ -203,6 +201,73 @@ export function VenueWorkspace({
   useEffect(() => {
     if (initialTab) setTab(initialTab);
   }, [initialTab]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await fetchBusinessProfiles({
+          page: 1,
+          page_size: 100,
+          sort_by: "business_name",
+        });
+        if (cancelled) return;
+        setBusinessOptionsLive(
+          data.items.map(mapBusinessProfileListItem).map((b) => ({
+            id: b.id,
+            businessId: b.businessId,
+            name: b.businessName,
+            businessType: b.businessType,
+            ownerId: b.ownerId,
+            ownerName: b.ownerName,
+            ownerEmail: b.ownerEmail,
+            ownerPhone: b.ownerPhone,
+            supportEmail: b.supportEmail,
+            supportPhone: b.supportPhone,
+            city: b.city,
+            state: b.state,
+            gstNumber: b.gstNumber,
+            panNumber: b.panNumber,
+            addressLine1: b.addressLine1,
+          }))
+        );
+      } catch {
+        if (!cancelled) setBusinessOptionsLive([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const meta = await fetchVenueMeta();
+        if (cancelled) return;
+        if (meta.amenities?.length) {
+          const iconByKey = new Map(amenityOptions.map((a) => [a.key, a.icon]));
+          setAmenityOptionsLive(
+            meta.amenities.map((name) => ({
+              key: name,
+              label: name,
+              icon: iconByKey.get(name) || "Sparkles",
+            }))
+          );
+        }
+        if (meta.event_types?.length) {
+          setEventCategoryOptionsLive(meta.event_types);
+        }
+      } catch {
+        /* keep static fallbacks */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const visibleTabs = isCreate ? ALL_TABS.filter((t) => CREATE_TABS.includes(t.key as CreateTabKey)) : ALL_TABS;
   const createTabIndex = CREATE_TABS.indexOf(tab as CreateTabKey);
   const isCreateFirstTab = isCreate && createTabIndex <= 0;
@@ -249,8 +314,8 @@ export function VenueWorkspace({
     else setLocalDocuments(next);
   };
 
-  const [coverImage, setCoverImage] = useState(venue.coverImage || "");
-  const [galleryImages, setGalleryImages] = useState<string[]>(() => [...(venue.galleryImages || [])]);
+  const [coverImage, setCoverImageState] = useState(venue.coverImage || "");
+  const [galleryImages, setGalleryImagesState] = useState<string[]>(() => [...(venue.galleryImages || [])]);
   const [images360, setImages360] = useState<string[]>(() => [...(venue.images360 || [])]);
   const [videoUrl, setVideoUrl] = useState(venue.videoUrl || "");
   const coverInputRef = useRef<HTMLInputElement>(null);
@@ -258,44 +323,37 @@ export function VenueWorkspace({
   const [availability, setAvailability] = useState<AvailabilityDay[]>(() => [...(venue.availability || [])]);
 
   useEffect(() => {
-    if (isCreate || !storeVenue?.availability) return;
-    setAvailability([...storeVenue.availability]);
-  }, [storeVenue?.availability, isCreate]);
+    setCoverImageState(venue.coverImage || "");
+    setGalleryImagesState([...(venue.galleryImages || [])]);
+    setImages360([...(venue.images360 || [])]);
+    setVideoUrl(venue.videoUrl || "");
+    setAvailability([...(venue.availability || [])]);
+  }, [venue.id]);
+
+  const setCoverImage = (url: string) => {
+    setCoverImageState(url);
+    onCoverImageChange?.(url);
+  };
+  const setGalleryImages = (next: string[] | ((prev: string[]) => string[])) => {
+    setGalleryImagesState((prev) => {
+      const value = typeof next === "function" ? next(prev) : next;
+      onGalleryImagesChange?.(value);
+      return value;
+    });
+  };
 
   const activeBusinessOptions = useMemo(() => {
-    const fromStore = activeBusinesses.map((b) => ({
-      value: b.id,
-      label: `${b.businessName} Â· ${b.city}`,
-    }));
-    const storeIds = new Set(fromStore.map((b) => b.value));
-    const extras = businessOptions
-      .filter((b) => !storeIds.has(b.id))
-      .map((b) => ({ value: b.id, label: `${b.name} Â· ${b.city}` }));
-    return [{ value: "", label: "Search / select business profile" }, ...fromStore, ...extras];
-  }, [activeBusinesses]);
+    return [
+      { value: "", label: "Search / select business profile" },
+      ...businessOptionsLive.map((b) => ({
+        value: b.id,
+        label: `${b.name} · ${b.city || "—"}`,
+      })),
+    ];
+  }, [businessOptionsLive]);
 
   const resolveBusinessOption = (businessId: string) => {
-    const staticOpt = getBusinessOption(businessId);
-    if (staticOpt) return staticOpt;
-    const b = activeBusinesses.find((x) => x.id === businessId || x.businessId === businessId);
-    if (!b) return undefined;
-    return {
-      id: b.id,
-      businessId: b.businessId,
-      name: b.businessName,
-      businessType: b.businessType,
-      ownerId: b.ownerId,
-      ownerName: b.ownerName,
-      ownerEmail: b.ownerEmail,
-      ownerPhone: b.ownerPhone,
-      supportEmail: b.supportEmail,
-      supportPhone: b.supportPhone,
-      city: b.city,
-      state: b.state,
-      gstNumber: b.gstNumber,
-      panNumber: b.panNumber,
-      addressLine1: b.addressLine1,
-    };
+    return businessOptionsLive.find((b) => b.id === businessId || b.businessId === businessId);
   };
 
   const [bookingSearch, setBookingSearch] = useState("");
@@ -390,20 +448,6 @@ export function VenueWorkspace({
       });
       return next;
     });
-    if (!isCreate) {
-      patchAvailabilityDay(venue.id, date, slot, {
-        status,
-        ...(status !== "booked"
-          ? {
-              bookingId: undefined,
-              bookingRef: undefined,
-              customerName: undefined,
-              eventType: undefined,
-              guests: undefined,
-            }
-          : {}),
-      });
-    }
   };
 
   const handleBookSlot = (payload: {
@@ -470,9 +514,6 @@ export function VenueWorkspace({
         });
       });
       const next = Array.from(map.values()).sort((a, b) => a.date.localeCompare(b.date));
-      if (!isCreate) {
-        setVenueAvailability(venue.id, next);
-      }
       return next;
     });
     setSelectedDates([]);
@@ -573,48 +614,23 @@ export function VenueWorkspace({
     return opts;
   }, []);
 
-  const storeBookings = useDemoStore((s) => s.bookings);
-  const relatedVenueBookings = useMemo(() => {
-    const a = bookingsForVenue(storeBookings, venue.venueId);
-    const b = bookingsForVenue(storeBookings, venue.id);
-    const map = new Map(a.concat(b).map((x) => [x.id, x]));
-    return Array.from(map.values());
-  }, [storeBookings, venue.venueId, venue.id]);
-  const relatedInvoices = useMemo(
-    () => flattenInvoices(relatedVenueBookings),
-    [relatedVenueBookings]
-  );
+  const relatedVenueBookings = useMemo(() => [] as Booking[], []);
+  const relatedInvoices = useMemo(() => flattenInvoices([]), []);
 
   const venueBookings = useMemo(() => {
-    return storeBookings
-      .filter((b) => b.venueId === venue.venueId || b.venueId === venue.id)
-      .map((b) => ({
-        id: b.id,
-        bookingId: b.bookingId,
-        customerName: b.customerName,
-        eventType: b.eventType,
-        bookingDate: b.bookingDate,
-        eventDate: b.eventDate,
-        guests: b.guestCount,
-        amount: b.bookingAmount,
-        paymentStatus:
-          b.paymentStatus === "paid"
-            ? ("paid" as const)
-            : b.paymentStatus === "partial"
-              ? ("partial" as const)
-              : b.paymentStatus === "refunded"
-                ? ("refunded" as const)
-                : ("pending" as const),
-        status:
-          b.bookingStatus === "completed"
-            ? ("completed" as const)
-            : b.bookingStatus === "cancelled" || b.bookingStatus === "refunded"
-              ? ("cancelled" as const)
-              : b.bookingStatus === "pending" || b.bookingStatus === "draft"
-                ? ("pending" as const)
-                : ("confirmed" as const),
-      }));
-  }, [storeBookings, venue.venueId, venue.id]);
+    return (venue.bookings || []).map((b) => ({
+      id: b.id || b.bookingId,
+      bookingId: b.bookingId,
+      customerName: b.customerName,
+      eventType: b.eventType,
+      bookingDate: b.bookingDate || b.eventDate,
+      eventDate: b.eventDate,
+      guests: b.guests,
+      amount: b.amount || 0,
+      paymentStatus: (b.paymentStatus || "pending") as "paid" | "partial" | "refunded" | "pending",
+      status: (b.status || "pending") as "completed" | "cancelled" | "pending" | "confirmed",
+    }));
+  }, [venue.bookings]);
 
   const filteredBookings = useMemo(() => {
     const q = bookingSearch.toLowerCase();
@@ -1095,6 +1111,7 @@ export function VenueWorkspace({
                       selected={editable ? form!.amenities : venue.amenities}
                       editable={editable}
                       onToggle={toggleAmenity}
+                      options={amenityOptionsLive}
                     />
                   </CollapsibleCard>
 
@@ -1140,7 +1157,7 @@ export function VenueWorkspace({
                     onToggle={toggleSection}
                   >
                     <ChipMultiSelect
-                      options={eventCategoryOptions}
+                      options={eventCategoryOptionsLive}
                       selected={editable ? form!.eventCategories : venue.eventCategories}
                       editable={editable}
                       onToggle={toggleEventCategory}
@@ -1479,8 +1496,8 @@ export function VenueWorkspace({
         {tab === "availability" && (
           <VenueAvailabilityPanel
             key={venue.id}
-            venue={storeVenue || venue}
-            availability={storeVenue?.availability ?? availability}
+            venue={venue}
+            availability={availability}
             onBook={handleBookSlot}
             onViewBooking={openBookingFromRow}
             bookActionLabel="Proceed to Booking"
@@ -1908,12 +1925,14 @@ function AmenityChips({
   selected,
   editable,
   onToggle,
+  options = amenityOptions,
 }: {
   selected: string[];
   editable?: boolean;
   onToggle?: (key: string) => void;
+  options?: AmenityOption[];
 }) {
-  const list = editable ? amenityOptions : amenityOptions.filter((a) => selected.includes(a.key));
+  const list = editable ? options : options.filter((a) => selected.includes(a.key));
   if (!editable && list.length === 0) {
     return <p className="text-sm text-[#9CA3AF]">No amenities listed.</p>;
   }

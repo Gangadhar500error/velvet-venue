@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Columns3, Download, Filter, Plus, Search, Upload } from "lucide-react";
 import { PageHeader } from "../_components/ui/PageHeader";
@@ -8,8 +8,16 @@ import { Button } from "../_components/ui/Button";
 import { FilterPanel } from "./components/FilterPanel";
 import { VenueTable, columnLabels } from "./components/VenueTable";
 import { confirmAction, notify } from "../_components/ui/Toast";
-import { useDemoStore } from "../store/demoStore";
-import { Venue, VenueColumnKey, VenueFilters, VenueStatus, ApprovalStatus } from "./types";
+import { Venue, VenueColumnKey, VenueFilters } from "./types";
+import {
+  deleteVenue,
+  fetchVenues,
+  filtersToParams,
+  mapVenueListItem,
+  updateVenue,
+} from "@/lib/venues";
+import { fetchBusinessProfiles, mapBusinessProfileListItem } from "@/lib/business-profiles";
+import { PermissionGate } from "@/components/PermissionGate";
 
 const defaultFilters: VenueFilters = {
   search: "",
@@ -44,9 +52,9 @@ const defaultColumns: Record<VenueColumnKey, boolean> = {
 export default function VenuesPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
-  const venues = useDemoStore((s) => s.venues);
-  const updateVenue = useDemoStore((s) => s.updateVenue);
-  const removeVenue = useDemoStore((s) => s.removeVenue);
+  const [venues, setVenues] = useState<Venue[]>([]);
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
   const [filters, setFilters] = useState<VenueFilters>(defaultFilters);
   const [appliedFilters, setAppliedFilters] = useState<VenueFilters>(defaultFilters);
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -57,11 +65,56 @@ export default function VenuesPage() {
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [visibleColumns, setVisibleColumns] = useState(defaultColumns);
   const [columnsOpen, setColumnsOpen] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [businessOptions, setBusinessOptions] = useState<
+    { id: string; name: string }[]
+  >([]);
   const columnsRef = useRef<HTMLDivElement>(null);
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const loadVenues = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const params = filtersToParams(appliedFilters, page, pageSize, sortKey, sortDir);
+      const data = await fetchVenues(params);
+      setVenues(data.items.map(mapVenueListItem));
+      setTotal(data.total);
+      setTotalPages(Math.max(1, data.total_pages));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load venues");
+      setVenues([]);
+      setTotal(0);
+      setTotalPages(1);
+    } finally {
+      setLoading(false);
+    }
+  }, [appliedFilters, page, pageSize, sortKey, sortDir]);
 
   useEffect(() => {
-    const t = setTimeout(() => setLoading(false), 600);
-    return () => clearTimeout(t);
+    loadVenues();
+  }, [loadVenues]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await fetchBusinessProfiles({ page: 1, page_size: 100 });
+        if (!cancelled) {
+          setBusinessOptions(
+            data.items.map(mapBusinessProfileListItem).map((b) => ({
+              id: b.id,
+              name: b.businessName,
+            }))
+          );
+        }
+      } catch {
+        if (!cancelled) setBusinessOptions([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -78,65 +131,14 @@ export default function VenuesPage() {
     const f = appliedFilters;
     return [
       f.businessId,
-      f.ownerId,
       f.category,
       f.city,
       f.approval,
-      f.availability,
-      f.capacityMin,
-      f.priceMin,
-      f.priceMax,
-      f.featured,
       f.status,
     ].filter(Boolean).length;
   }, [appliedFilters]);
 
-  const filtered = useMemo(() => {
-    let list = [...venues];
-    const f = appliedFilters;
-
-    if (f.search) {
-      const q = f.search.toLowerCase();
-      list = list.filter(
-        (v) =>
-          v.name.toLowerCase().includes(q) ||
-          v.venueId.toLowerCase().includes(q) ||
-          v.businessName.toLowerCase().includes(q) ||
-          v.city.toLowerCase().includes(q) ||
-          v.ownerName.toLowerCase().includes(q)
-      );
-    }
-    if (f.businessId) list = list.filter((v) => v.businessId === f.businessId || v.id === f.businessId);
-    if (f.ownerId) list = list.filter((v) => v.ownerId === f.ownerId);
-    if (f.category) list = list.filter((v) => v.category === f.category);
-    if (f.city) list = list.filter((v) => v.city === f.city);
-    if (f.approval) list = list.filter((v) => v.approval === f.approval);
-    if (f.availability) list = list.filter((v) => v.availabilityLabel === f.availability);
-    if (f.capacityMin) list = list.filter((v) => v.maxGuests >= Number(f.capacityMin));
-    if (f.priceMin) list = list.filter((v) => v.startingPrice >= Number(f.priceMin));
-    if (f.priceMax) list = list.filter((v) => v.startingPrice <= Number(f.priceMax));
-    if (f.featured) list = list.filter((v) => (f.featured === "yes" ? v.featured : !v.featured));
-    if (f.status) list = list.filter((v) => v.status === f.status);
-
-    list.sort((a, b) => {
-      const av = a[sortKey as keyof Venue];
-      const bv = b[sortKey as keyof Venue];
-      if (typeof av === "number" && typeof bv === "number") {
-        return sortDir === "asc" ? av - bv : bv - av;
-      }
-      return sortDir === "asc" ? String(av).localeCompare(String(bv)) : String(bv).localeCompare(String(av));
-    });
-
-    return list;
-  }, [venues, appliedFilters, sortKey, sortDir]);
-
-  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const startIndex = (page - 1) * pageSize;
-  const pageItems = filtered.slice(startIndex, startIndex + pageSize);
-
-  useEffect(() => {
-    setPage(1);
-  }, [appliedFilters, pageSize]);
 
   const handleSort = (key: string) => {
     if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
@@ -144,57 +146,75 @@ export default function VenuesPage() {
       setSortKey(key);
       setSortDir("asc");
     }
+    setPage(1);
   };
 
   const toggleSelect = (id: string) => {
-    setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+    setSelectedIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
   };
 
   const toggleSelectAll = () => {
-    if (selectedIds.length === pageItems.length) setSelectedIds([]);
-    else setSelectedIds(pageItems.map((v) => v.id));
+    if (selectedIds.length === venues.length) setSelectedIds([]);
+    else setSelectedIds(venues.map((v) => v.id));
   };
 
   const goCreate = () => router.push("/admin/venues/create");
   const goEdit = (venue: Venue) => router.push(`/admin/venues/${venue.id}/edit`);
-  const goClone = (venue: Venue) => router.push(`/admin/venues/create?clone=${venue.id}`);
 
   const handleDelete = async (venue: Venue) => {
     const ok = await confirmAction({
       title: "Delete Venue?",
-      message: `Are you sure you want to delete ${venue.name}?\n\nThis action cannot be undone.`,
+      message: `Are you sure you want to delete ${venue.name}?\n\nThis will soft-delete the venue.`,
     });
     if (!ok) return;
-    removeVenue(venue.id);
-    setSelectedIds((prev) => prev.filter((id) => id !== venue.id));
-    notify.deleted("Venue");
+    try {
+      await deleteVenue(venue.id);
+      setSelectedIds((prev) => prev.filter((id) => id !== venue.id));
+      notify.deleted("Venue");
+      await loadVenues();
+    } catch (err) {
+      notify.error(err instanceof Error ? err.message : "Delete failed");
+    }
   };
 
-  const handleApprove = (venue: Venue) => updateVenue(venue.id, { approval: "approved" as ApprovalStatus });
-  const handleReject = (venue: Venue) => updateVenue(venue.id, { approval: "rejected" as ApprovalStatus });
-  const handlePublish = (venue: Venue) => updateVenue(venue.id, { status: "published" as VenueStatus });
-  const handleUnpublish = (venue: Venue) => updateVenue(venue.id, { status: "inactive" as VenueStatus });
-  const handleArchive = (venue: Venue) => updateVenue(venue.id, { status: "archived" as VenueStatus });
+  const handleToggleStatus = async (venue: Venue) => {
+    const next = venue.status === "published" ? "inactive" : "published";
+    try {
+      await updateVenue(venue.id, { venue_status: next });
+      notify.updated("Venue");
+      await loadVenues();
+    } catch (err) {
+      notify.error(err instanceof Error ? err.message : "Status update failed");
+    }
+  };
 
   const applySearch = (value: string) => {
     setFilters((prev) => ({ ...prev, search: value }));
-    setAppliedFilters((prev) => ({ ...prev, search: value }));
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+    searchTimer.current = setTimeout(() => {
+      setAppliedFilters((prev) => ({ ...prev, search: value }));
+      setPage(1);
+    }, 350);
   };
 
   return (
     <div className="space-y-4 animate-fadeIn">
       <PageHeader
-        title="Venue Management"
-        subtitle="Manage all venues, availability, pricing, approvals and bookings."
+        title="Venues"
+        subtitle="Manage venue listings, pricing, gallery, documents and approval."
         breadcrumbs={[
           { label: "Dashboard", href: "/admin" },
           { label: "Venue Management" },
           { label: "Venues" },
         ]}
         actions={
-          <Button variant="primary" icon={Plus} onClick={goCreate}>
-            Create Venue
-          </Button>
+          <PermissionGate permission="Venue.Create">
+            <Button variant="primary" icon={Plus} onClick={goCreate}>
+              Create Venue
+            </Button>
+          </PermissionGate>
         }
       />
 
@@ -205,11 +225,10 @@ export default function VenuesPage() {
             <input
               value={filters.search}
               onChange={(e) => applySearch(e.target.value)}
-              placeholder="Search by venue name, venue ID, business, city or owner..."
+              placeholder="Search by venue name, ID, business or city..."
               className="w-full h-10 pl-10 pr-3.5 rounded-[10px] border border-[#E8EAF0] bg-[#FCFCFD] text-sm text-[#111827] placeholder:text-[#9CA3AF] hover:border-[#D1D5DB] focus:outline-none focus:bg-white focus:ring-2 focus:ring-[#C89B3C]/20 focus:border-[#C89B3C] transition-colors"
             />
           </div>
-
           <div className="flex flex-wrap items-center gap-2 shrink-0">
             <Button
               variant="secondary"
@@ -222,14 +241,13 @@ export default function VenuesPage() {
                   : ""
               }
             >
-              Advanced Filters
+              Filters
               {activeFilterCount > 0 && (
                 <span className="ml-0.5 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-[#C89B3C] text-white text-[10px] font-semibold leading-none">
                   {activeFilterCount}
                 </span>
               )}
             </Button>
-
             <div className="relative" ref={columnsRef}>
               <Button
                 variant="secondary"
@@ -256,10 +274,7 @@ export default function VenuesPage() {
                           type="checkbox"
                           checked={visibleColumns[key]}
                           onChange={() =>
-                            setVisibleColumns((prev) => ({
-                              ...prev,
-                              [key]: !prev[key],
-                            }))
+                            setVisibleColumns((prev) => ({ ...prev, [key]: !prev[key] }))
                           }
                           className="rounded border-[#D1D5DB] text-[#C89B3C] focus:ring-[#C89B3C]"
                         />
@@ -269,9 +284,6 @@ export default function VenuesPage() {
                 </div>
               )}
             </div>
-
-            <div className="hidden sm:block w-px h-7 bg-[#E8EAF0] mx-0.5" aria-hidden />
-
             <Button variant="secondary" size="sm" icon={Upload}>
               Import
             </Button>
@@ -286,42 +298,28 @@ export default function VenuesPage() {
         open={filtersOpen}
         filters={filters}
         activeCount={activeFilterCount}
+        businessOptions={businessOptions}
         onChange={(key, value) => setFilters((prev) => ({ ...prev, [key]: value }))}
         onApply={() => {
           setAppliedFilters(filters);
+          setPage(1);
           setFiltersOpen(false);
           notify.filtersApplied();
         }}
         onReset={() => {
           setFilters(defaultFilters);
           setAppliedFilters(defaultFilters);
+          setPage(1);
           notify.filtersReset();
         }}
         onClose={() => setFiltersOpen(false)}
-        onSave={() => notify.viewSaved()}
       />
 
-      {selectedIds.length > 0 && (
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-[14px] border border-[#C89B3C]/20 bg-[#FFF3EB] px-4 py-3">
-          <p className="text-sm font-medium text-[#111827]">
-            <span className="text-[#C89B3C] font-semibold">{selectedIds.length}</span> venues selected
-          </p>
-          <div className="flex flex-wrap gap-2">
-            <Button variant="secondary" size="sm">
-              Publish
-            </Button>
-            <Button variant="secondary" size="sm">
-              Unpublish
-            </Button>
-            <Button variant="secondary" size="sm" icon={Download}>
-              Export
-            </Button>
-            <Button variant="danger" size="sm">
-              Delete
-            </Button>
-          </div>
+      {error ? (
+        <div className="rounded-[14px] border border-[#FECACA] bg-[#FEF2F2] px-4 py-3 text-sm text-[#DC2626]">
+          {error}
         </div>
-      )}
+      ) : null}
 
       {loading ? (
         <div className="bg-white border border-[#E8EAF0] rounded-[14px] p-6 animate-pulse space-y-3">
@@ -331,7 +329,7 @@ export default function VenuesPage() {
         </div>
       ) : (
         <VenueTable
-          venues={pageItems}
+          venues={venues}
           selectedIds={selectedIds}
           onToggleSelect={toggleSelect}
           onToggleSelectAll={toggleSelectAll}
@@ -342,12 +340,9 @@ export default function VenuesPage() {
           onSort={handleSort}
           onEdit={goEdit}
           onDelete={handleDelete}
-          onClone={goClone}
-          onApprove={handleApprove}
-          onReject={handleReject}
-          onPublish={handlePublish}
-          onUnpublish={handleUnpublish}
-          onArchive={handleArchive}
+          onClone={(venue) => router.push(`/admin/venues/create?clone=${venue.id}`)}
+          onPublish={handleToggleStatus}
+          onUnpublish={handleToggleStatus}
           emptyAction={goCreate}
         />
       )}
@@ -357,7 +352,10 @@ export default function VenuesPage() {
           <span>Rows</span>
           <select
             value={pageSize}
-            onChange={(e) => setPageSize(Number(e.target.value))}
+            onChange={(e) => {
+              setPageSize(Number(e.target.value));
+              setPage(1);
+            }}
             className="h-9 px-2.5 rounded-[10px] border border-[#E8EAF0] bg-white text-sm text-[#111827] focus:outline-none focus:ring-2 focus:ring-[#C89B3C]/25"
           >
             {[10, 25, 50, 100].map((n) => (
@@ -369,9 +367,9 @@ export default function VenuesPage() {
           <span>
             Showing{" "}
             <span className="font-medium text-[#111827]">
-              {filtered.length === 0 ? 0 : startIndex + 1}-{Math.min(startIndex + pageSize, filtered.length)}
+              {total === 0 ? 0 : startIndex + 1}-{Math.min(startIndex + pageSize, total)}
             </span>{" "}
-            of <span className="font-medium text-[#111827]">{filtered.length.toLocaleString()}</span> Venues
+            of <span className="font-medium text-[#111827]">{total.toLocaleString()}</span> Venues
           </span>
         </div>
         <div className="flex items-center gap-1.5">
@@ -383,32 +381,6 @@ export default function VenuesPage() {
           >
             Previous
           </Button>
-          {Array.from({ length: totalPages }, (_, i) => i + 1)
-            .filter((p) => p === 1 || p === totalPages || Math.abs(p - page) <= 1)
-            .reduce<(number | string)[]>((acc, p, idx, arr) => {
-              if (idx > 0 && p - (arr[idx - 1] as number) > 1) acc.push("...");
-              acc.push(p);
-              return acc;
-            }, [])
-            .map((p, idx) =>
-              typeof p === "string" ? (
-                <span key={`e-${idx}`} className="px-2 text-[#9CA3AF]">
-                  …
-                </span>
-              ) : (
-                <button
-                  key={p}
-                  onClick={() => setPage(p)}
-                  className={`min-w-9 h-9 rounded-[10px] text-sm font-medium transition-colors ${
-                    page === p
-                      ? "bg-[#C89B3C] text-white"
-                      : "bg-white border border-[#E8EAF0] text-[#4B5563] hover:bg-[#F8F9FB]"
-                  }`}
-                >
-                  {p}
-                </button>
-              )
-            )}
           <Button
             variant="secondary"
             size="sm"

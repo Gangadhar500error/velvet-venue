@@ -16,6 +16,7 @@ from app.models.user import User
 from app.models.venue_owner import VenueOwner
 from app.repositories.business_profile_repository import BusinessProfileRepository
 from app.repositories.venue_owner_repository import VenueOwnerRepository
+from app.repositories.venue_repository import VenueRepository
 from app.schemas.business_profile import (
     BookingSummary,
     BusinessOverview,
@@ -49,6 +50,7 @@ class BusinessProfileService:
         self.db = db
         self.repo = BusinessProfileRepository(db)
         self.owners = VenueOwnerRepository(db)
+        self.venues = VenueRepository(db)
         self.permissions = PermissionService(db)
 
     def _scoped_venue_owner_id(self, actor: User) -> uuid.UUID | None:
@@ -120,8 +122,9 @@ class BusinessProfileService:
             return "", "", ""
         return owner.full_name, owner.email, owner.mobile
 
-    def _to_list_item(self, profile: BusinessProfile) -> BusinessProfileListItem:
+    async def _to_list_item(self, profile: BusinessProfile) -> BusinessProfileListItem:
         owner_name, owner_email, owner_phone = self._owner_fields(profile)
+        total_venues = await self.venues.count_by_business_profile(profile.id)
         return BusinessProfileListItem(
             id=profile.id,
             business_code=profile.business_code,
@@ -137,13 +140,19 @@ class BusinessProfileService:
             owner_phone=owner_phone,
             gst_number=profile.gst_number,
             created_at=profile.created_at,
-            total_venues=0,
+            total_venues=total_venues,
             initials=_initials(profile.business_name),
         )
 
-    def _compute_overview(self, profile: BusinessProfile) -> BusinessOverview:
-        # Venues/bookings tables not migrated yet — return live zeros.
+    async def _compute_overview(self, profile: BusinessProfile) -> BusinessOverview:
+        status_counts = await self.venues.count_by_status_for_business(profile.id)
+        total = sum(status_counts.values())
         return BusinessOverview(
+            total_venues=total,
+            published_venues=status_counts.get("published", 0),
+            pending_venues=status_counts.get("pending", 0) + status_counts.get("draft", 0),
+            inactive_venues=status_counts.get("inactive", 0),
+            draft_venues=status_counts.get("draft", 0),
             verification_status=profile.verification_status,
             business_type=profile.business_type,
             created_at=profile.created_at,
@@ -151,7 +160,7 @@ class BusinessProfileService:
 
     async def _to_detail(self, profile: BusinessProfile) -> BusinessProfileDetailResponse:
         owner_name, owner_email, owner_phone = self._owner_fields(profile)
-        overview = self._compute_overview(profile)
+        overview = await self._compute_overview(profile)
         bank_date = (
             profile.bank_proof_uploaded_at.date()
             if profile.bank_proof_uploaded_at
@@ -162,6 +171,7 @@ class BusinessProfileService:
             for d in self._active_documents(profile)
             if d.deleted_at is None
         ]
+        venue_rows = await self.venues.list_by_business_profile(profile.id, limit=50)
         return BusinessProfileDetailResponse(
             id=profile.id,
             business_code=profile.business_code,
@@ -205,7 +215,18 @@ class BusinessProfileService:
             updated_by=profile.updated_by,
             initials=_initials(profile.business_name),
             overview=overview,
-            venues=[],
+            venues=[
+                VenueSummary(
+                    id=v.id,
+                    venue_code=v.venue_code,
+                    name=v.venue_name,
+                    category=v.category,
+                    capacity=v.seating_capacity,
+                    city=v.city,
+                    status=v.venue_status,
+                )
+                for v in venue_rows
+            ],
             recent_bookings=[],
             documents=docs,
         )
@@ -337,8 +358,10 @@ class BusinessProfileService:
             page_size=page_size,
         )
         total_pages = max(1, math.ceil(total / page_size)) if page_size else 1
+        items = [await self._to_list_item(p) for p in rows]
+        total_pages = max(1, math.ceil(total / page_size)) if page_size else 1
         return BusinessProfileListResponse(
-            items=[self._to_list_item(p) for p in rows],
+            items=items,
             total=total,
             page=page,
             page_size=page_size,
@@ -514,8 +537,8 @@ class BusinessProfileService:
             )
         self._assert_access(actor, profile)
 
-        # When venues module exists, block delete if active venues are linked.
-        active_venues = 0
+        # Block delete if active venues are linked.
+        active_venues = await self.venues.count_by_business_profile(profile.id)
         if active_venues > 0:
             raise HTTPException(
                 status_code=http_status.HTTP_409_CONFLICT,

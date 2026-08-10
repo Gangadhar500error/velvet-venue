@@ -11,7 +11,6 @@ import {
 } from "lucide-react";
 import { Button } from "../../_components/ui/Button";
 import { toast } from "../../_components/ui/Toast";
-import { useDemoStore } from "../../store/demoStore";
 import type { AvailabilityDay, DayAvailabilityStatus, Venue } from "../types";
 import { formatDate } from "../data";
 import {
@@ -60,7 +59,6 @@ export function VenueAvailabilityPanel({
   hideSummaryStats = false,
   calendarPageMode = false,
 }: VenueAvailabilityPanelProps) {
-  const storeBookings = useDemoStore((s) => s.bookings);
   const isSlotBased = normalizePricingMethod(venue.pricingMethod) === "slot_based";
 
   const today = toYmd(new Date());
@@ -97,24 +95,7 @@ export function VenueAvailabilityPanel({
   const monthPrefix = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, "0")}`;
 
   const liveBookings = useMemo(() => {
-    const fromStore: LiveBookingLite[] = storeBookings
-      .filter((b) => b.venueId === venue.venueId || b.venueId === venue.id)
-      .map((b) => ({
-        id: b.id,
-        bookingId: b.bookingId,
-        customerName: b.customerName,
-        eventType: b.eventType,
-        eventDate: b.eventDate,
-        eventEndDate: b.eventEndDate,
-        selectedDates: b.selectedDates,
-        guestCount: b.guestCount,
-        slot: b.slot || "Full Day",
-        bookingStatus: b.bookingStatus,
-        paymentStatus: b.paymentStatus,
-        bookingAmount: b.bookingAmount,
-        startTime: b.startTime,
-        endTime: b.endTime,
-      }));
+    const fromStore: LiveBookingLite[] = [];
 
     const byBooking = new Map<string, string[]>();
     availability.forEach((a) => {
@@ -143,7 +124,7 @@ export function VenueAvailabilityPanel({
     });
 
     return fromStore;
-  }, [storeBookings, venue.venueId, venue.id, availability]);
+  }, [venue.venueId, venue.id, availability]);
 
   const stats = useMemo(
     () => monthSlotStats(venue, availability, monthPrefix, liveBookings),

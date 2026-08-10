@@ -6,22 +6,21 @@ import Link from "next/link";
 import { ArrowLeft, CheckCircle2, X } from "lucide-react";
 import { defaultDocumentSlots } from "../data";
 import { VenueWorkspace } from "../components/VenueWorkspace";
-import { VenueDocument } from "../types";
+import { Venue, VenueDocument } from "../types";
 import { Button } from "../../_components/ui/Button";
 import { PageHeader } from "../../_components/ui/PageHeader";
 import { confirmAction, notify, toast } from "../../_components/ui/Toast";
-import { useDemoStore } from "../../store/demoStore";
+import { deleteVenue, fetchVenue, mapVenueDetail } from "@/lib/venues";
 
 function ViewVenueContent() {
   const params = useParams();
   const id = params.id as string;
   const router = useRouter();
   const searchParams = useSearchParams();
-  const venue = useDemoStore((s) => s.venues.find((v) => v.id === id || v.venueId === id));
-  const removeVenue = useDemoStore((s) => s.removeVenue);
-  const [documents, setDocuments] = useState<VenueDocument[]>(() =>
-    venue?.documents?.length ? venue.documents.map((d) => ({ ...d })) : defaultDocumentSlots()
-  );
+  const [venue, setVenue] = useState<Venue | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [notFound, setNotFound] = useState(false);
+  const [documents, setDocuments] = useState<VenueDocument[]>(defaultDocumentSlots);
   const [showCreatedBanner, setShowCreatedBanner] = useState(false);
   const tabParam = searchParams.get("tab");
   const initialTab =
@@ -33,6 +32,35 @@ function ViewVenueContent() {
     tabParam === "overview"
       ? tabParam
       : undefined;
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      try {
+        const data = await fetchVenue(id);
+        if (cancelled) return;
+        const mapped = mapVenueDetail(data);
+        setVenue(mapped);
+        setDocuments(
+          mapped.documents?.length
+            ? mapped.documents.map((d) => ({ ...d }))
+            : defaultDocumentSlots()
+        );
+        setNotFound(false);
+      } catch {
+        if (!cancelled) {
+          setVenue(null);
+          setNotFound(true);
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [id]);
 
   useEffect(() => {
     if (searchParams.get("created") === "1") {
@@ -48,7 +76,16 @@ function ViewVenueContent() {
     }
   }, [searchParams, id, router]);
 
-  if (!venue) {
+  if (loading) {
+    return (
+      <div className="bg-white border border-[#E8EAF0] rounded-[14px] p-6 animate-pulse space-y-3">
+        <div className="h-10 bg-[#F3F4F6] rounded-lg" />
+        <div className="h-24 bg-[#F3F4F6] rounded-lg" />
+      </div>
+    );
+  }
+
+  if (notFound || !venue) {
     return (
       <div className="space-y-4 animate-fadeIn">
         <PageHeader
@@ -113,9 +150,13 @@ function ViewVenueContent() {
             message: `Are you sure you want to delete ${venue.name}?\n\nThis action cannot be undone.`,
           });
           if (!ok) return;
-          removeVenue(venue.id);
-          notify.deleted("Venue");
-          router.push("/admin/venues");
+          try {
+            await deleteVenue(venue.id);
+            notify.deleted("Venue");
+            router.push("/admin/venues");
+          } catch (err) {
+            notify.error(err instanceof Error ? err.message : "Failed to delete venue");
+          }
         }}
       />
     </div>

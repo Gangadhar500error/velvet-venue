@@ -4,7 +4,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { Filter, RotateCcw, Save, X } from "lucide-react";
 import { Button } from "../../_components/ui/Button";
 import { VenueFilters } from "../types";
-import { businessOptions, categoryOptions, cityOptions, ownerOptions } from "../data";
+import { categoryOptions, cityOptions } from "../data";
 
 interface FilterPanelProps {
   open: boolean;
@@ -15,6 +15,7 @@ interface FilterPanelProps {
   onClose: () => void;
   onSave?: () => void;
   activeCount?: number;
+  businessOptions?: { id: string; name: string }[];
 }
 
 export function FilterPanel({
@@ -26,6 +27,7 @@ export function FilterPanel({
   onClose,
   onSave,
   activeCount = 0,
+  businessOptions = [],
 }: FilterPanelProps) {
   return (
     <AnimatePresence initial={false}>
@@ -67,15 +69,6 @@ export function FilterPanel({
                 options={[
                   { value: "", label: "All Business Profiles" },
                   ...businessOptions.map((b) => ({ value: b.id, label: b.name })),
-                ]}
-              />
-              <SelectField
-                label="Venue Owner"
-                value={filters.ownerId}
-                onChange={(v) => onChange("ownerId", v)}
-                options={[
-                  { value: "", label: "All Owners" },
-                  ...ownerOptions.map((o) => ({ value: o.id, label: o.name })),
                 ]}
               />
               <SelectField
