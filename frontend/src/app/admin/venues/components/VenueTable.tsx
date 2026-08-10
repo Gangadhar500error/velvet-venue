@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   Archive,
   Ban,
@@ -20,6 +21,10 @@ import { Venue, VenueColumnKey, TableDensity } from "../types";
 import { formatCurrency } from "../data";
 import { StatusBadge } from "../../_components/ui/StatusBadge";
 import { Button } from "../../_components/ui/Button";
+
+const MENU_WIDTH = 208;
+const MENU_GAP = 4;
+const VIEWPORT_PAD = 8;
 
 interface VenueTableProps {
   venues: Venue[];
@@ -377,15 +382,10 @@ function RowActions({
   onArchive: () => void;
 }) {
   const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, []);
+  const [mounted, setMounted] = useState(false);
+  const [coords, setCoords] = useState<{ top: number; left: number; openUp: boolean } | null>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
 
   const items = [
     { label: "View", icon: Eye, onClick: onView },
@@ -399,37 +399,118 @@ function RowActions({
     { label: "Delete", icon: Trash2, onClick: onDelete, danger: true },
   ].filter((item) => !item.hidden);
 
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  const updatePosition = useCallback(() => {
+    const trigger = triggerRef.current;
+    if (!trigger) return;
+
+    const rect = trigger.getBoundingClientRect();
+    const estimatedHeight = Math.min(items.length * 40 + 12, 360);
+    const measuredHeight = menuRef.current?.offsetHeight || estimatedHeight;
+    const spaceBelow = window.innerHeight - rect.bottom - VIEWPORT_PAD;
+    const spaceAbove = rect.top - VIEWPORT_PAD;
+    const openUp = spaceBelow < measuredHeight && spaceAbove > spaceBelow;
+
+    let left = rect.right - MENU_WIDTH;
+    left = Math.max(VIEWPORT_PAD, Math.min(left, window.innerWidth - MENU_WIDTH - VIEWPORT_PAD));
+
+    const top = openUp
+      ? Math.max(VIEWPORT_PAD, rect.top - measuredHeight - MENU_GAP)
+      : Math.min(rect.bottom + MENU_GAP, window.innerHeight - measuredHeight - VIEWPORT_PAD);
+
+    setCoords({ top, left, openUp });
+  }, [items.length]);
+
+  useLayoutEffect(() => {
+    if (!open) {
+      setCoords(null);
+      return;
+    }
+    updatePosition();
+    const frame = requestAnimationFrame(updatePosition);
+    return () => cancelAnimationFrame(frame);
+  }, [open, updatePosition]);
+
+  useEffect(() => {
+    if (!open) return;
+
+    const onScrollOrResize = () => updatePosition();
+    const onPointerDown = (e: MouseEvent) => {
+      const target = e.target as Node;
+      if (triggerRef.current?.contains(target) || menuRef.current?.contains(target)) return;
+      setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+
+    window.addEventListener("resize", onScrollOrResize);
+    document.addEventListener("scroll", onScrollOrResize, true);
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("resize", onScrollOrResize);
+      document.removeEventListener("scroll", onScrollOrResize, true);
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open, updatePosition]);
+
+  const menu =
+    mounted && open && coords
+      ? createPortal(
+          <div
+            ref={menuRef}
+            role="menu"
+            className="fixed z-[80] w-52 bg-white border border-[#E8EAF0] rounded-xl shadow-[0_12px_40px_rgba(15,23,42,0.14)] py-1.5 overflow-y-auto overscroll-contain"
+            style={{
+              top: coords.top,
+              left: coords.left,
+              maxHeight: `calc(100vh - ${VIEWPORT_PAD * 2}px)`,
+            }}
+          >
+            {items.map((item) => {
+              const Icon = item.icon;
+              return (
+                <button
+                  key={item.label}
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    item.onClick();
+                    setOpen(false);
+                  }}
+                  className={`w-full flex items-center gap-2.5 px-3.5 py-2.5 text-sm transition-colors ${
+                    item.danger ? "text-red-600 hover:bg-red-50" : "text-[#374151] hover:bg-[#F8F9FB]"
+                  }`}
+                >
+                  <Icon className="w-4 h-4 shrink-0" />
+                  {item.label}
+                </button>
+              );
+            })}
+          </div>,
+          document.body
+        )
+      : null;
+
   return (
-    <div className="relative inline-flex justify-center" ref={ref}>
+    <div className="inline-flex justify-center">
       <button
+        ref={triggerRef}
+        type="button"
         onClick={() => setOpen((v) => !v)}
         className="p-2 rounded-lg hover:bg-[#F3F4F6] text-[#6B7280] transition-colors"
         aria-label={`Actions for ${venue.name}`}
+        aria-haspopup="menu"
+        aria-expanded={open}
       >
         <MoreHorizontal className="w-4 h-4" />
       </button>
-      {open && (
-        <div className="absolute right-0 top-full mt-1 w-52 bg-white border border-[#E8EAF0] rounded-xl shadow-xl z-20 py-1.5 overflow-hidden">
-          {items.map((item) => {
-            const Icon = item.icon;
-            return (
-              <button
-                key={item.label}
-                onClick={() => {
-                  item.onClick();
-                  setOpen(false);
-                }}
-                className={`w-full flex items-center gap-2.5 px-3.5 py-2.5 text-sm transition-colors ${
-                  item.danger ? "text-red-600 hover:bg-red-50" : "text-[#374151] hover:bg-[#F8F9FB]"
-                }`}
-              >
-                <Icon className="w-4 h-4" />
-                {item.label}
-              </button>
-            );
-          })}
-        </div>
-      )}
+      {menu}
     </div>
   );
 }
