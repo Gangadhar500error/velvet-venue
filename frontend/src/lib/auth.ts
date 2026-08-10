@@ -61,9 +61,8 @@ export function saveAuthSession(
   localStorage.setItem("is_authenticated", "true");
 }
 
-export function getRedirectPathForRole(role: string): string {
-  if (role === "admin" || role === "vendor") return "/admin";
-  return "/";
+export function getRedirectPathForRole(_role: string): string {
+  return "/admin";
 }
 
 async function parseApiError(response: Response): Promise<string> {
@@ -97,6 +96,8 @@ export async function login(email: string, password: string): Promise<LoginRespo
     name: data.user.name,
     role: data.user.role,
     email: email.trim().toLowerCase(),
+    portal: data.user.portal,
+    permissions: data.user.permissions,
   });
   return data;
 }
@@ -143,6 +144,9 @@ export async function getMe(): Promise<MeResponse> {
     first_name: data.first_name,
     last_name: data.last_name,
     created_at: data.created_at,
+    portal: data.portal,
+    permissions: data.permissions,
+    data_scope: data.data_scope,
   };
   localStorage.setItem(AUTH_USER_KEY, JSON.stringify(user));
   return data;

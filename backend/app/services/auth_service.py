@@ -30,12 +30,14 @@ from app.schemas.auth import (
     VerifyEmailRequest,
     signup_role_to_enum,
 )
+from app.services.permission_service import PermissionService
 
 
 class AuthService:
     def __init__(self, db: AsyncSession) -> None:
         self.repo = AuthRepository(db)
         self.db = db
+        self.permissions = PermissionService(db)
         self._token_blacklist: set[str] = set()
 
     async def signup(self, payload: SignupRequest) -> SignupResponse:
@@ -78,6 +80,8 @@ class AuthService:
             )
 
         role_name = user.role.name.value
+        user_permissions = sorted(await self.permissions.get_user_permissions(user))
+        portal = self.permissions.get_portal_for_role(role_name)
         access_token = create_access_token(user.id, user.email, role_name)
         refresh_token = create_refresh_token(user.id, user.email, role_name)
 
@@ -88,14 +92,23 @@ class AuthService:
                 id=user.id,
                 name=f"{user.first_name} {user.last_name}".strip(),
                 role=role_name,
+                portal=portal,
+                permissions=user_permissions,
             ),
         )
 
     async def get_me(self, user: User) -> MeResponse:
+        role_name = user.role.name.value
+        user_permissions = sorted(await self.permissions.get_user_permissions(user))
+        portal = self.permissions.get_portal_for_role(role_name)
+        data_scope = self.permissions.get_data_scope(user).value
         return MeResponse(
             id=user.id,
             email=user.email,
-            role=user.role.name.value,
+            role=role_name,
+            portal=portal,
+            permissions=user_permissions,
+            data_scope=data_scope,
             phone=user.phone,
             first_name=user.first_name,
             last_name=user.last_name,

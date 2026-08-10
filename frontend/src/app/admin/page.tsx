@@ -26,6 +26,9 @@ import { useDemoStore } from "./store/demoStore";
 import { formatCurrency } from "./bookings/data";
 import { toYmd } from "./venues/availability";
 import type { Booking } from "./bookings/types";
+import { useAuth } from "@/contexts/AuthContext";
+import { PermissionGate } from "@/components/PermissionGate";
+import VendorDashboard, { CustomerDashboard } from "./_components/dashboard/RoleDashboards";
 
 type ScheduleRow = {
   id: string;
@@ -77,6 +80,13 @@ const STATIC_TODAYS_SCHEDULE: ScheduleRow[] = [
 ];
 
 export default function AdminDashboardPage() {
+  const { portal } = useAuth();
+  if (portal === "vendor") return <VendorDashboard />;
+  if (portal === "customer") return <CustomerDashboard />;
+  return <AdminDashboardContent />;
+}
+
+function AdminDashboardContent() {
   const [now, setNow] = useState(() => new Date());
   const [mounted, setMounted] = useState(false);
   const businesses = useDemoStore((s) => s.businesses);
@@ -276,12 +286,14 @@ export default function AdminDashboardPage() {
             <span className="hidden sm:inline text-[12px] text-[#9CA3AF] mr-1">
               {now.toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short" })}
             </span>
-            <Link
-              href="/admin/bookings/create"
-              className="h-9 px-3.5 rounded-xl bg-[#C89B3C] text-white text-sm font-medium inline-flex items-center gap-1.5 hover:bg-[#B8862B] shadow-sm transition-all hover:shadow-md"
-            >
-              <Plus className="w-4 h-4" /> New Booking
-            </Link>
+            <PermissionGate permission="Booking.Create">
+              <Link
+                href="/admin/bookings/create"
+                className="h-9 px-3.5 rounded-xl bg-[#C89B3C] text-white text-sm font-medium inline-flex items-center gap-1.5 hover:bg-[#B8862B] shadow-sm transition-all hover:shadow-md"
+              >
+                <Plus className="w-4 h-4" /> New Booking
+              </Link>
+            </PermissionGate>
           </div>
         }
       />

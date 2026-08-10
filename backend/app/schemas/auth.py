@@ -72,6 +72,8 @@ class LoginUserResponse(BaseModel):
     id: uuid.UUID
     name: str
     role: str
+    portal: str
+    permissions: list[str] = Field(default_factory=list)
 
 
 class LoginResponse(BaseModel):
@@ -89,6 +91,9 @@ class MeResponse(BaseModel):
     id: uuid.UUID
     email: str
     role: str
+    portal: str
+    permissions: list[str] = Field(default_factory=list)
+    data_scope: str
     phone: str | None
     first_name: str
     last_name: str

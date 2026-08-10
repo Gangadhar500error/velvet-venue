@@ -9,6 +9,9 @@ export interface AuthUser {
   first_name?: string;
   last_name?: string;
   created_at?: string;
+  portal?: string;
+  permissions?: string[];
+  data_scope?: string;
 }
 
 export interface LoginResponse {
@@ -20,6 +23,8 @@ export interface LoginResponse {
     id: string;
     name: string;
     role: UserRole;
+    portal: string;
+    permissions: string[];
   };
 }
 
@@ -38,6 +43,9 @@ export interface MeResponse {
   id: string;
   email: string;
   role: UserRole;
+  portal: string;
+  permissions: string[];
+  data_scope: string;
   phone: string | null;
   first_name: string;
   last_name: string;

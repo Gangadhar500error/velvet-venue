@@ -16,89 +16,52 @@ import {
   CalendarDays,
   Calendar,
   Wallet,
-  ArrowLeftRight,
   Banknote,
   FileText,
-  Megaphone,
-  Star,
   BarChart3,
-  Database,
   Settings,
   LogOut,
   Loader2,
+  Heart,
+  Star,
+  Bell,
+  type LucideIcon,
 } from "lucide-react";
-import { useDemoStore } from "../store/demoStore";
+import { useAuth } from "@/contexts/AuthContext";
 import { getInitials, getRoleLabel } from "@/lib/auth-display";
 import { useLogout } from "@/hooks/useLogout";
-import type { AuthUser } from "@/types/auth";
-
-interface NavItem {
-  label: string;
-  href: string;
-  icon: React.ComponentType<{ className?: string; strokeWidth?: number }>;
-  badge?: number;
-  children?: NavItem[];
-}
+import type { MenuItem } from "@/types/permissions";
 
 const SIDEBAR_W = 260;
 const SIDEBAR_COLLAPSED_W = 72;
 const ACCENT = "#C89B3C";
 
-function buildNavItems(bookingCount: number): NavItem[] {
-  return [
-    {
-      label: "Dashboard",
-      href: "/admin",
-      icon: LayoutDashboard,
-    },
-    {
-      label: "User Management",
-      href: "/admin/customers",
-      icon: Users,
-      children: [
-        { label: "Customers", href: "/admin/customers", icon: UserRound },
-        { label: "Venue Owners", href: "/admin/venue-owners", icon: Briefcase },
-      ],
-    },
-    {
-      label: "Venue Management",
-      href: "/admin/business-profile",
-      icon: Building2,
-      children: [
-        { label: "Business Profile", href: "/admin/business-profile", icon: Briefcase },
-        { label: "Venues", href: "/admin/venues", icon: Building2 },
-      ],
-    },
-    {
-      label: "Booking Management",
-      href: "/admin/bookings",
-      icon: CalendarDays,
-      children: [
-        {
-          label: "Bookings",
-          href: "/admin/bookings",
-          icon: CalendarDays,
-          badge: bookingCount > 0 ? bookingCount : undefined,
-        },
-        { label: "Calendar", href: "/admin/calendar", icon: Calendar },
-      ],
-    },
-    {
-      label: "Financial",
-      href: "/admin/transactions",
-      icon: Wallet,
-      children: [
-       
-        { label: "Invoices", href: "/admin/invoices", icon: FileText },
-      ],
-    },
-    {
-      label: "Settings",
-      href: "/admin/settings/profile",
-      icon: Settings,
-    },
-  
-  ];
+const ICON_MAP: Record<string, LucideIcon> = {
+  LayoutDashboard,
+  Users,
+  UserRound,
+  Building2,
+  Briefcase,
+  CalendarDays,
+  Calendar,
+  Wallet,
+  Banknote,
+  FileText,
+  BarChart3,
+  Settings,
+  Heart,
+  Star,
+  Bell,
+};
+
+type NavItem = MenuItem & { iconComponent: LucideIcon };
+
+function mapMenus(items: MenuItem[]): NavItem[] {
+  return items.map((item) => ({
+    ...item,
+    iconComponent: ICON_MAP[item.icon || ""] || LayoutDashboard,
+    children: mapMenus(item.children || []),
+  }));
 }
 
 interface AdminSidebarProps {
@@ -107,7 +70,6 @@ interface AdminSidebarProps {
   isMobileOpen: boolean;
   onMobileClose: () => void;
   isDarkMode: boolean;
-  currentUser?: AuthUser | null;
 }
 
 export default function AdminSidebar({
@@ -115,21 +77,22 @@ export default function AdminSidebar({
   isMobileOpen,
   onMobileClose,
   isDarkMode,
-  currentUser,
 }: AdminSidebarProps) {
   const pathname = usePathname();
+  const { user, menus } = useAuth();
   const { handleLogout, isLoggingOut } = useLogout();
-  const bookingCount = useDemoStore((s) => s.bookings.length);
-  const navItems = useMemo(() => buildNavItems(bookingCount), [bookingCount]);
+  const navItems = useMemo(() => mapMenus(menus), [menus]);
   const [openItems, setOpenItems] = useState<string[]>([]);
   const [tooltipVisible, setTooltipVisible] = useState<string | null>(null);
   const [isLargeScreen, setIsLargeScreen] = useState(false);
 
   useEffect(() => {
     const activeParents = navItems.filter((item) => {
-      if (!item.children) return false;
+      if (!item.children?.length) return false;
       return item.children.some(
-        (child) => pathname === child.href || pathname.startsWith(`${child.href}/`)
+        (child) =>
+          child.href &&
+          (pathname === child.href || pathname.startsWith(`${child.href}/`))
       );
     });
     if (activeParents.length) {
@@ -168,13 +131,13 @@ export default function AdminSidebar({
     return pathname === href || pathname.startsWith(`${href}/`);
   };
 
-  const displayName = currentUser?.name || "Admin User";
-  const displayRole = getRoleLabel(currentUser?.role);
+  const displayName = user?.name || "User";
+  const displayRole = getRoleLabel(user?.role);
   const initials = getInitials(displayName);
 
   const isChildActive = (children?: NavItem[]) => {
-    if (!children) return false;
-    return children.some((child) => isActive(child.href));
+    if (!children?.length) return false;
+    return children.some((child) => child.href && isActive(child.href));
   };
 
   const showLabels = !isCollapsed || isMobileOpen;
@@ -188,11 +151,11 @@ export default function AdminSidebar({
     level?: number;
     forceLabels?: boolean;
   }) => {
-    const Icon = item.icon;
+    const Icon = item.iconComponent;
     const hasChildren = Boolean(item.children?.length);
     const isOpen = openItems.includes(item.label);
     const childActive = isChildActive(item.children);
-    const selfActive = !hasChildren && isActive(item.href);
+    const selfActive = !hasChildren && item.href ? isActive(item.href) : false;
     const active = selfActive;
     const isSection = hasChildren && level === 0;
     const labelsVisible = showLabels || forceLabels;
@@ -238,7 +201,7 @@ export default function AdminSidebar({
               >
                 <div className="space-y-1 pb-1">
                   {item.children!.map((child) => (
-                    <NavItemComponent key={child.href} item={child} level={level + 1} />
+                    <NavItemComponent key={child.id} item={child} level={level + 1} />
                   ))}
                 </div>
               </motion.div>
@@ -251,7 +214,7 @@ export default function AdminSidebar({
     return (
       <div className="relative">
         <Link
-          href={hasChildren ? "#" : item.href}
+          href={hasChildren ? "#" : item.href || "#"}
           onClick={handleClick}
           className={`
             group relative flex items-center gap-3 rounded-[12px] overflow-hidden transition-all duration-200
@@ -303,17 +266,6 @@ export default function AdminSidebar({
               >
                 {item.label}
               </span>
-              {item.badge ? (
-                <span
-                  className={`px-2 min-w-[22px] h-6 inline-flex items-center justify-center text-[11px] font-semibold rounded-full ${
-                    active
-                      ? "bg-[#C89B3C]/25 text-[#FDBA74]"
-                      : "bg-[#C89B3C] text-white"
-                  }`}
-                >
-                  {item.badge}
-                </span>
-              ) : null}
               {hasChildren && (
                 <ChevronDown
                   className={`w-4 h-4 shrink-0 transition-transform duration-[250ms] ${
@@ -347,12 +299,7 @@ export default function AdminSidebar({
                   {item.label}
                 </p>
                 {item.children!.map((child) => (
-                  <NavItemComponent
-                    key={child.href}
-                    item={child}
-                    level={1}
-                    forceLabels
-                  />
+                  <NavItemComponent key={child.id} item={child} level={1} forceLabels />
                 ))}
               </motion.div>
             )}
@@ -396,14 +343,12 @@ export default function AdminSidebar({
         } ${!isLargeScreen && !isMobileOpen ? "pointer-events-none" : ""}`}
         initial={false}
         animate={{
-          // On mobile drawer, always use full width so nav stays usable
           width: !isLargeScreen || !isCollapsed ? SIDEBAR_W : SIDEBAR_COLLAPSED_W,
           x: isLargeScreen ? 0 : isMobileOpen ? 0 : -SIDEBAR_W,
         }}
         transition={{ type: "spring", stiffness: 260, damping: 28 }}
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Logo — no white card */}
         <div className="h-[72px] shrink-0 flex items-center justify-between border-b border-white/[0.08] px-4">
           {showLabels ? (
             <div className="flex items-center grow min-w-0">
@@ -442,7 +387,7 @@ export default function AdminSidebar({
 
         <nav className="vv-sidebar-scroll grow overflow-y-auto overflow-x-hidden px-3.5 py-5 space-y-1.5">
           {navItems.map((item) => (
-            <NavItemComponent key={item.label} item={item} />
+            <NavItemComponent key={item.id} item={item} />
           ))}
         </nav>
 

@@ -3,6 +3,7 @@ from typing import Annotated
 from fastapi import APIRouter, Body, Depends, status
 
 from app.dependencies.auth import get_auth_service, get_current_active_user
+from app.dependencies.permissions import get_permission_service
 from app.models.user import User
 from app.schemas.auth import (
     ChangePasswordRequest,
@@ -20,7 +21,14 @@ from app.schemas.auth import (
     SignupResponse,
     VerifyEmailRequest,
 )
+from app.schemas.permissions import (
+    AccessConfigResponse,
+    DashboardResponse,
+    MenusResponse,
+    PermissionCheckResponse,
+)
 from app.services.auth_service import AuthService
+from app.services.permission_service import PermissionService
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -188,3 +196,53 @@ async def verify_email(
     auth_service: Annotated[AuthService, Depends(get_auth_service)],
 ) -> MessageResponse:
     return await auth_service.verify_email(payload)
+
+
+@router.get(
+    "/menus",
+    response_model=MenusResponse,
+    summary="Get navigation menus for the current user",
+)
+async def get_menus(
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    permission_service: Annotated[PermissionService, Depends(get_permission_service)],
+) -> MenusResponse:
+    items = await permission_service.get_menus_for_user(current_user)
+    return MenusResponse(items=items)
+
+
+@router.get(
+    "/dashboard",
+    response_model=DashboardResponse,
+    summary="Get dashboard widget configuration for the current user",
+)
+async def get_dashboard(
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    permission_service: Annotated[PermissionService, Depends(get_permission_service)],
+) -> DashboardResponse:
+    return await permission_service.get_dashboard_for_user(current_user)
+
+
+@router.get(
+    "/access-config",
+    response_model=AccessConfigResponse,
+    summary="Get permissions, route map, and data scope for the current user",
+)
+async def get_access_config(
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    permission_service: Annotated[PermissionService, Depends(get_permission_service)],
+) -> AccessConfigResponse:
+    return await permission_service.get_access_config(current_user)
+
+
+@router.get(
+    "/check-permission/{permission_code}",
+    response_model=PermissionCheckResponse,
+    summary="Check if the current user has a specific permission",
+)
+async def check_permission(
+    permission_code: str,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    permission_service: Annotated[PermissionService, Depends(get_permission_service)],
+) -> PermissionCheckResponse:
+    return await permission_service.check_permission(current_user, permission_code)

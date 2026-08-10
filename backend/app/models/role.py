@@ -35,3 +35,6 @@ class Role(Base):
     )
 
     users: Mapped[list["User"]] = relationship("User", back_populates="role")
+    permissions: Mapped[list["Permission"]] = relationship(
+        "Permission", secondary="role_permissions", back_populates="roles"
+    )

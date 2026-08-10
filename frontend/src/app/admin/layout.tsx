@@ -1,5 +1,6 @@
 import Script from "next/script";
 import { ThemeProvider } from "./_components/ThemeProvider";
+import { AuthProvider } from "@/contexts/AuthContext";
 import AdminShell from "./AdminShell";
 
 const themeInitScript = `
@@ -25,7 +26,9 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         {themeInitScript}
       </Script>
       <ThemeProvider>
-        <AdminShell>{children}</AdminShell>
+        <AuthProvider>
+          <AdminShell>{children}</AdminShell>
+        </AuthProvider>
       </ThemeProvider>
     </>
   );
