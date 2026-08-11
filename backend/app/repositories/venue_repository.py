@@ -6,6 +6,7 @@ from sqlalchemy import Select, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.venue_catalog import amenity_meta, service_icon
 from app.models.business_profile import BusinessProfile
 from app.models.venue import (
     EventType,
@@ -38,13 +39,15 @@ class VenueRepository:
     def _detail_options(self):
         return [
             selectinload(Venue.business_profile).selectinload(BusinessProfile.venue_owner),
-            selectinload(Venue.pricing).selectinload(VenuePricing.slots),
-            selectinload(Venue.pricing).selectinload(VenuePricing.food_slots),
+            selectinload(Venue.pricing_records).selectinload(VenuePricing.slots),
+            selectinload(Venue.pricing_records).selectinload(VenuePricing.food_slots),
             selectinload(Venue.gallery_items),
             selectinload(Venue.documents),
             selectinload(Venue.amenity_links).selectinload(VenueAmenityMapping.amenity),
             selectinload(Venue.service_links).selectinload(VenueServiceMapping.service),
             selectinload(Venue.event_links).selectinload(VenueEventMapping.event_type),
+            selectinload(Venue.faqs),
+            selectinload(Venue.review_items),
         ]
 
     async def get_by_id(self, venue_id: uuid.UUID) -> Venue | None:
@@ -247,7 +250,8 @@ class VenueRepository:
         result = await self.db.execute(
             base.options(
                 selectinload(Venue.business_profile).selectinload(BusinessProfile.venue_owner),
-                selectinload(Venue.pricing),
+                selectinload(Venue.pricing_records).selectinload(VenuePricing.slots),
+                selectinload(Venue.pricing_records).selectinload(VenuePricing.food_slots),
             )
             .order_by(order)
             .offset(offset)
@@ -274,8 +278,13 @@ class VenueRepository:
         )
         existing = result.scalar_one_or_none()
         if existing:
+            if not existing.icon or not existing.category:
+                icon, category = amenity_meta(existing.code, existing.name)
+                existing.icon = existing.icon or icon
+                existing.category = existing.category or category
             return existing
-        item = VenueAmenity(code=code, name=cleaned)
+        icon, category = amenity_meta(code, cleaned)
+        item = VenueAmenity(code=code, name=cleaned, icon=icon, category=category)
         self.db.add(item)
         await self.db.flush()
         return item
@@ -290,8 +299,10 @@ class VenueRepository:
         )
         existing = result.scalar_one_or_none()
         if existing:
+            if not existing.icon:
+                existing.icon = service_icon(existing.code, existing.name)
             return existing
-        item = VenueService(code=code, name=cleaned)
+        item = VenueService(code=code, name=cleaned, icon=service_icon(code, cleaned))
         self.db.add(item)
         await self.db.flush()
         return item
@@ -335,3 +346,47 @@ class VenueRepository:
             .order_by(EventType.display_order, EventType.name)
         )
         return list(result.scalars().all())
+
+    async def list_related(self, venue: Venue, *, limit: int = 6) -> list[Venue]:
+        if not venue.city:
+            return []
+        result = await self.db.execute(
+            select(Venue)
+            .options(
+                selectinload(Venue.pricing_records).selectinload(VenuePricing.slots),
+                selectinload(Venue.pricing_records).selectinload(VenuePricing.food_slots),
+            )
+            .where(
+                Venue.id != venue.id,
+                Venue.city == venue.city,
+                Venue.venue_status == VenueStatus.PUBLISHED.value,
+                *self._not_deleted(),
+            )
+            .order_by(Venue.featured.desc(), Venue.updated_at.desc())
+            .limit(limit)
+        )
+        return list(result.scalars().unique().all())
+
+    async def list_similar(
+        self, venue: Venue, *, exclude_ids: list[uuid.UUID] | None = None, limit: int = 6
+    ) -> list[Venue]:
+        if not venue.category:
+            return []
+        excluded = set(exclude_ids or [])
+        excluded.add(venue.id)
+        result = await self.db.execute(
+            select(Venue)
+            .options(
+                selectinload(Venue.pricing_records).selectinload(VenuePricing.slots),
+                selectinload(Venue.pricing_records).selectinload(VenuePricing.food_slots),
+            )
+            .where(
+                Venue.id.notin_(list(excluded)),
+                Venue.category == venue.category,
+                Venue.venue_status == VenueStatus.PUBLISHED.value,
+                *self._not_deleted(),
+            )
+            .order_by(Venue.featured.desc(), Venue.updated_at.desc())
+            .limit(limit)
+        )
+        return list(result.scalars().unique().all())

@@ -212,14 +212,20 @@ export function resolveDayDisplayTone(args: {
 }): CalendarDayTone {
   const today = args.today ?? toYmd(new Date());
   const { date, coveringBookings, availability } = args;
+  const row = availabilityRowForDate(availability, date);
+
+  if (row?.status === "completed") return "completed";
+  if (row?.status === "blocked" || row?.status === "maintenance") return "blocked";
+  if (row?.status === "holiday") return "holiday";
+  if (row?.status === "no_booking") return "no_booking";
+  if (row?.status === "expired") return "disabled";
+  if (row?.status === "partially_booked") return "partial";
+  if (row?.status === "booked") return date < today ? "completed" : "booked";
 
   if (coveringBookings.length > 0) {
     return date < today ? "completed" : "booked";
   }
 
-  const row = availabilityRowForDate(availability, date);
-  if (row?.status === "blocked" || row?.status === "maintenance") return "blocked";
-  if (row?.status === "holiday") return "holiday";
   if (date < today) return "no_booking";
   return "available";
 }
@@ -253,6 +259,7 @@ export function blockedReasonLabel(row?: AvailabilityDay): string | undefined {
   if (row.status === "maintenance") return "Maintenance";
   if (row.status === "holiday") return "Holiday";
   if (row.status === "blocked") return "Admin Block";
+  if (row.status === "expired") return "Outside booking window";
   return undefined;
 }
 
@@ -271,7 +278,15 @@ export function resolveSlotsForDate(args: {
   const displayTone = resolveDayDisplayTone({ date, coveringBookings: covering, availability, today });
   const availRow = availabilityRowForDate(availability, date);
 
+  const rowsForDate = availability.filter((a) => a.date === date);
+
   return slots.map((slot) => {
+    const availSlot =
+      rowsForDate.find(
+        (row) =>
+          (row.slotKey && row.slotKey === slot.key) ||
+          normalizeVenueSlotKey(row.slot) === slot.key
+      ) || availRow;
     const activeBooking =
       covering.find(
         (b) =>
@@ -281,11 +296,16 @@ export function resolveSlotsForDate(args: {
       ) || covering[0];
 
     let status: DayAvailabilityStatus = "available";
-    if (activeBooking) {
+    if (activeBooking || availSlot?.status === "booked" || availSlot?.status === "completed") {
       status = "booked";
-    } else if (availRow?.status === "holiday") {
+    } else if (availSlot?.status === "holiday" || availRow?.status === "holiday") {
       status = "holiday";
-    } else if (availRow?.status === "blocked" || availRow?.status === "maintenance") {
+    } else if (
+      availSlot?.status === "blocked" ||
+      availSlot?.status === "maintenance" ||
+      availRow?.status === "blocked" ||
+      availRow?.status === "maintenance"
+    ) {
       status = "blocked";
     }
 
@@ -306,11 +326,11 @@ export function resolveSlotsForDate(args: {
       slotName: method === "full_day" ? "Full Day" : slot.name,
       timeLabel: slot.timeLabel,
       status,
-      bookingId: activeBooking?.bookingId,
-      bookingRef: activeBooking?.id,
-      customerName: activeBooking?.customerName,
-      eventType: activeBooking?.eventType,
-      guests: activeBooking?.guestCount,
+      bookingId: activeBooking?.bookingId || availSlot?.bookingId,
+      bookingRef: activeBooking?.id || availSlot?.bookingRef,
+      customerName: activeBooking?.customerName || availSlot?.customerName,
+      eventType: activeBooking?.eventType || availSlot?.eventType,
+      guests: activeBooking?.guestCount || availSlot?.guests,
       bookingStatus: activeBooking?.bookingStatus,
       paymentStatus: activeBooking?.paymentStatus,
       bookingAmount: activeBooking?.bookingAmount,
@@ -431,12 +451,14 @@ export function monthSlotStats(
         available += 1;
         break;
       case "booked":
+      case "partial":
         booked += 1;
         break;
       case "completed":
         completed += 1;
         break;
       case "blocked":
+      case "holiday":
         blocked += 1;
         break;
       default:

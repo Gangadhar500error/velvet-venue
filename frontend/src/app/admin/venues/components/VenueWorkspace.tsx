@@ -68,6 +68,7 @@ import {
 import { EntityViewLayout } from "../../_components/layout/EntityViewLayout";
 import { fetchBusinessProfiles, mapBusinessProfileListItem } from "@/lib/business-profiles";
 import { fetchVenueMeta } from "@/lib/venues";
+import { fetchAvailabilityWindow } from "@/lib/availability";
 import type { Booking } from "../../bookings/types";
 import type { AmenityOption } from "../data";
 
@@ -203,6 +204,7 @@ export function VenueWorkspace({
   }, [initialTab]);
 
   useEffect(() => {
+    if (!editable) return;
     let cancelled = false;
     (async () => {
       try {
@@ -238,9 +240,10 @@ export function VenueWorkspace({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [editable]);
 
   useEffect(() => {
+    if (!editable) return;
     let cancelled = false;
     (async () => {
       try {
@@ -266,7 +269,7 @@ export function VenueWorkspace({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [editable]);
 
   const visibleTabs = isCreate ? ALL_TABS.filter((t) => CREATE_TABS.includes(t.key as CreateTabKey)) : ALL_TABS;
   const createTabIndex = CREATE_TABS.indexOf(tab as CreateTabKey);
@@ -321,6 +324,7 @@ export function VenueWorkspace({
   const coverInputRef = useRef<HTMLInputElement>(null);
 
   const [availability, setAvailability] = useState<AvailabilityDay[]>(() => [...(venue.availability || [])]);
+  const availabilityLoadedFor = useRef<string | null>(null);
 
   useEffect(() => {
     setCoverImageState(venue.coverImage || "");
@@ -328,7 +332,27 @@ export function VenueWorkspace({
     setImages360([...(venue.images360 || [])]);
     setVideoUrl(venue.videoUrl || "");
     setAvailability([...(venue.availability || [])]);
+    availabilityLoadedFor.current = null;
   }, [venue.id]);
+
+  useEffect(() => {
+    if (tab !== "availability" || mode === "create" || !venue.id) return;
+    if (availabilityLoadedFor.current === venue.id) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { days } = await fetchAvailabilityWindow(venue.id, venue.maxAdvanceBookingDays || 180);
+        if (cancelled) return;
+        availabilityLoadedFor.current = venue.id;
+        setAvailability(days);
+      } catch {
+        if (!cancelled) setAvailability([...(venue.availability || [])]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [tab, mode, venue.id, venue.maxAdvanceBookingDays]);
 
   const setCoverImage = (url: string) => {
     setCoverImageState(url);

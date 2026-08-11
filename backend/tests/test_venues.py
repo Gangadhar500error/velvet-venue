@@ -84,11 +84,27 @@ async def test_create_venue_with_pricing(client: AsyncClient):
     assert venue["venue_name"].startswith("Test Banquet")
     assert venue["pricing"]["pricing_type"] == "venue_only"
     assert len(venue["amenities"]) == 3
+    assert isinstance(venue["amenities"][0], dict)
+    assert venue["amenities"][0]["name"]
+    assert venue["amenities"][0]["icon"]
     assert len(venue["pricing"]["slots"]) == 1
+    assert venue["business_profile"]["business_name"]
+    assert venue["owner"]["name"] is not None
+    assert venue["location"]["city"] == "Hyderabad"
+    assert venue["booking_summary"]["today_bookings"] == 0
+    assert venue["seo"]["title"]
+    assert venue["availability"]
+    assert venue["availability"][0]["slots"]
 
     detail = await client.get(f"{VENUES_BASE}/{venue['id']}", headers=_auth(token))
     assert detail.status_code == 200
-    assert detail.json()["venue_code"] == venue["venue_code"]
+    body = detail.json()
+    assert body["venue_code"] == venue["venue_code"]
+    assert body["reviews"]["total_reviews"] == 0
+    assert isinstance(body["reviews"]["items"], list)
+    assert body["availability"]
+    dates = [row["date"] for row in body["availability"]]
+    assert len(dates) == len(set(dates))
 
     pricing = await client.get(
         f"{VENUES_BASE}/{venue['id']}/pricing", headers=_auth(token)

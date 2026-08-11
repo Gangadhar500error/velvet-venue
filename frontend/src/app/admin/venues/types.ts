@@ -5,9 +5,15 @@ export type AvailabilityLabel = "available" | "busy" | "blocked";
 export type DayAvailabilityStatus =
   | "available"
   | "booked"
+  | "partially_booked"
   | "blocked"
   | "holiday"
-  | "maintenance";
+  | "closed"
+  | "maintenance"
+  | "completed"
+  | "cancelled"
+  | "no_booking"
+  | "expired";
 export type BookingStatus = "confirmed" | "pending" | "completed" | "cancelled";
 export type PaymentStatus = "paid" | "partial" | "pending" | "refunded" | "failed";
 
@@ -111,6 +117,7 @@ export interface AvailabilityDay {
   eventType?: string;
   guests?: number;
   slot?: string;
+  slotKey?: string;
   /** Internal booking record id for navigation */
   bookingRef?: string;
 }

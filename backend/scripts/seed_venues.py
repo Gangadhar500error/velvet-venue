@@ -214,7 +214,7 @@ async def seed_venues(session) -> None:
                         display_order=order,
                     )
                 )
-        venue.pricing = pricing
+        venue.pricing_records.append(pricing)
 
         venue.gallery_items.append(
             VenueGalleryItem(

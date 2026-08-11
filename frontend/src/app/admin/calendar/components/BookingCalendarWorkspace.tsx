@@ -16,16 +16,19 @@ import {
 import { PageHeader } from "../../_components/ui/PageHeader";
 import { Button } from "../../_components/ui/Button";
 import { EntityLink } from "../../_components/relations/EntityLink";
-import { useDemoStore } from "../../store/demoStore";
 import { VenueAvailabilityPanel } from "../../venues/components/VenueAvailabilityPanel";
-import type { DayAvailabilityStatus, Venue } from "../../venues/types";
+import type { AvailabilityDay, DayAvailabilityStatus, Venue } from "../../venues/types";
 import {
   bookingWindowLabel,
   displayLabelForTone,
   getDaySummary,
-  monthSlotStats,
   toYmd,
 } from "../../venues/availability";
+import { fetchVenue, fetchVenues, mapVenueDetail, mapVenueListItem } from "@/lib/venues";
+import {
+  fetchAvailabilityWindow,
+  type AvailabilityDashboardApi,
+} from "@/lib/availability";
 
 function pickDefaultVenueId(venueList: Venue[]) {
   if (venueList.length === 0) return "";
@@ -36,9 +39,10 @@ function pickDefaultVenueId(venueList: Venue[]) {
 export function BookingCalendarWorkspace() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const venues = useDemoStore((s) => s.venues);
-  const businesses = useDemoStore((s) => s.businesses);
-  const bookings = useDemoStore((s) => s.bookings);
+  const [venues, setVenues] = useState<Venue[]>([]);
+  const [selectedVenue, setSelectedVenue] = useState<Venue | null>(null);
+  const [availability, setAvailability] = useState<AvailabilityDay[]>([]);
+  const [dashboard, setDashboard] = useState<AvailabilityDashboardApi | null>(null);
 
   const urlVenueId = searchParams.get("venue") || "";
   const [venueId, setVenueId] = useState(urlVenueId);
@@ -52,21 +56,56 @@ export function BookingCalendarWorkspace() {
   const today = toYmd(new Date());
   const monthPrefix = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`;
 
-  /** Always read live venue from store (matches venue availability tab) */
-  const venue = useMemo(() => {
-    if (!venueId || isPickingVenue) return undefined;
-    return venues.find((v) => v.id === venueId || v.venueId === venueId);
-  }, [venues, venueId, isPickingVenue]);
+  const venue = !venueId || isPickingVenue ? undefined : selectedVenue || undefined;
 
-  const businessProfile = useMemo(
-    () =>
-      venue
-        ? businesses.find(
-            (b) => b.id === venue.businessId || b.businessId === venue.businessId
-          )
-        : undefined,
-    [businesses, venue]
-  );
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await fetchVenues({ page: 1, page_size: 100, sort_by: "venue_name" });
+        if (cancelled) return;
+        setVenues((data.items || []).map(mapVenueListItem));
+      } catch {
+        if (!cancelled) setVenues([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!venueId || isPickingVenue) {
+      setSelectedVenue(null);
+      setAvailability([]);
+      setDashboard(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const detail = await fetchVenue(venueId);
+        const mapped = mapVenueDetail(detail);
+        const { days, dashboard: cards } = await fetchAvailabilityWindow(
+          mapped.id,
+          mapped.maxAdvanceBookingDays || 180
+        );
+        if (cancelled) return;
+        setSelectedVenue(mapped);
+        setAvailability(days);
+        setDashboard(cards);
+      } catch {
+        if (!cancelled) {
+          setSelectedVenue(null);
+          setAvailability([]);
+          setDashboard(null);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [venueId, isPickingVenue, monthPrefix]);
 
   const filteredVenues = useMemo(() => {
     const q = venueQuery.trim().toLowerCase();
@@ -135,42 +174,24 @@ export function BookingCalendarWorkspace() {
     syncUrl("");
   };
 
-  const liveBookings = useMemo(() => {
-    if (!venue) return [];
-    return bookings
-      .filter((b) => b.venueId === venue.venueId || b.venueId === venue.id)
-      .map((b) => ({
-        id: b.id,
-        bookingId: b.bookingId,
-        customerName: b.customerName,
-        eventType: b.eventType,
-        eventDate: b.eventDate,
-        eventEndDate: b.eventEndDate,
-        selectedDates: b.selectedDates,
-        guestCount: b.guestCount,
-        slot: b.slot || "Full Day",
-        bookingStatus: b.bookingStatus,
-        paymentStatus: b.paymentStatus,
-        bookingAmount: b.bookingAmount,
-        startTime: b.startTime,
-        endTime: b.endTime,
-      }));
-  }, [bookings, venue]);
-
-  const stats = useMemo(() => {
-    if (!venue) return null;
-    return monthSlotStats(venue, venue.availability || [], monthPrefix, liveBookings);
-  }, [venue, monthPrefix, liveBookings]);
+  const stats = dashboard
+    ? {
+        available: dashboard.available_days,
+        booked: dashboard.booked_days,
+        completed: dashboard.completed_days,
+        blocked: dashboard.blocked_days,
+        occupancy: dashboard.occupancy_percent,
+      }
+    : null;
 
   const todaySummary = useMemo(() => {
     if (!venue) return null;
     return getDaySummary({
       date: today,
       venue,
-      availability: venue.availability || [],
-      liveBookings,
+      availability,
     });
-  }, [venue, today, liveBookings]);
+  }, [venue, today, availability]);
 
   const handleBookSlot = (payload: {
     date: string;
@@ -330,8 +351,8 @@ export function BookingCalendarWorkspace() {
                 <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[12px] text-[#6B7280]">
                   <span className="inline-flex items-center gap-1">
                     <Building2 className="w-3.5 h-3.5" />
-                    {businessProfile ? (
-                      <EntityLink href={`/admin/business-profile/${businessProfile.id}`}>
+                    {venue.businessId ? (
+                      <EntityLink href={`/admin/business-profile/${venue.businessId}`}>
                         {venue.businessName}
                       </EntityLink>
                     ) : (
@@ -395,7 +416,7 @@ export function BookingCalendarWorkspace() {
           <VenueAvailabilityPanel
             key={venue.id}
             venue={venue}
-            availability={venue.availability || []}
+            availability={availability}
             onBook={handleBookSlot}
             onViewBooking={openBooking}
             hideSummaryStats

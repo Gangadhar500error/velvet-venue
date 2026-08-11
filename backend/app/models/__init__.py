@@ -1,3 +1,9 @@
+from app.models.availability import (
+    VenueAvailability,
+    VenueAvailabilityBlock,
+    VenueAvailabilityLog,
+    VenueSlotAvailability,
+)
 from app.models.business_profile import BusinessProfile, BusinessProfileDocument
 from app.models.customer import Customer
 from app.models.permission import Menu, Permission, RolePermission
@@ -10,9 +16,11 @@ from app.models.venue import (
     VenueAmenityMapping,
     VenueDocument,
     VenueEventMapping,
+    VenueFaq,
     VenueFoodSlot,
     VenueGalleryItem,
     VenuePricing,
+    VenueReview,
     VenueService,
     VenueServiceMapping,
     VenueSlot,
@@ -30,15 +38,21 @@ __all__ = [
     "RoleName",
     "RolePermission",
     "User",
+    "VenueAvailability",
+    "VenueAvailabilityBlock",
+    "VenueAvailabilityLog",
+    "VenueSlotAvailability",
     "Venue",
     "VenueAmenity",
     "VenueAmenityMapping",
     "VenueDocument",
     "VenueEventMapping",
+    "VenueFaq",
     "VenueFoodSlot",
     "VenueGalleryItem",
     "VenueOwner",
     "VenuePricing",
+    "VenueReview",
     "VenueService",
     "VenueServiceMapping",
     "VenueSlot",

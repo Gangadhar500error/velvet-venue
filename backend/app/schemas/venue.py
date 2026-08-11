@@ -22,7 +22,7 @@ def _initials(name: str) -> str:
 
 
 class PricingSlotInput(BaseModel):
-    id: uuid.UUID | None = None
+    id: uuid.UUID | str | None = None
     key: str = "custom"
     name: str
     enabled: bool = True
@@ -34,7 +34,7 @@ class PricingSlotInput(BaseModel):
 
 
 class FoodSlotInput(BaseModel):
-    id: uuid.UUID | None = None
+    id: uuid.UUID | str | None = None
     key: str = "custom"
     name: str
     enabled: bool = True
@@ -64,7 +64,11 @@ class PricingInput(BaseModel):
 class GalleryItemInput(BaseModel):
     id: uuid.UUID | None = None
     image_url: str
+    thumbnail_url: str | None = None
+    title: str | None = None
     image_type: str = "gallery"
+    media_type: str = "image"
+    is_cover: bool = False
     caption: str | None = None
     display_order: int = 0
 
@@ -78,6 +82,8 @@ class DocumentInput(BaseModel):
     file_size: str | None = None
     file_url: str | None = None
     verified_by: str | None = None
+    expiry_date: date | None = None
+    verified_at: datetime | None = None
     uploaded_date: date | None = None
 
 
@@ -289,7 +295,11 @@ class PricingResponse(BaseModel):
 class GalleryItemResponse(BaseModel):
     id: uuid.UUID
     image_url: str
+    thumbnail_url: str | None = None
+    title: str | None = None
     image_type: str
+    media_type: str = "image"
+    is_cover: bool = False
     caption: str | None = None
     display_order: int = 0
 
@@ -303,7 +313,169 @@ class DocumentResponse(BaseModel):
     file_size: str | None = None
     file_url: str | None = None
     verified_by: str | None = None
+    expiry_date: date | None = None
+    verified_at: datetime | None = None
     uploaded_date: date | None = None
+
+
+class AmenityItem(BaseModel):
+    id: uuid.UUID
+    name: str
+    icon: str | None = None
+    category: str | None = None
+
+
+class ServiceItem(BaseModel):
+    id: uuid.UUID
+    name: str
+    icon: str | None = None
+    description: str | None = None
+
+
+class EventCategoryItem(BaseModel):
+    id: uuid.UUID
+    name: str
+
+
+class BusinessProfileNested(BaseModel):
+    id: uuid.UUID
+    business_name: str
+    business_type: str | None = None
+    logo: str | None = None
+    verified: bool = False
+
+
+class OwnerNested(BaseModel):
+    id: uuid.UUID | None = None
+    name: str = ""
+    email: str = ""
+    phone: str = ""
+
+
+class LocationNested(BaseModel):
+    address_line1: str | None = None
+    address_line2: str | None = None
+    city: str | None = None
+    state: str | None = None
+    country: str | None = None
+    postal_code: str | None = None
+    latitude: str | None = None
+    longitude: str | None = None
+    google_map_url: str | None = None
+    landmark: str | None = None
+
+
+class CapacitiesNested(BaseModel):
+    minimum_guests: int | None = None
+    maximum_guests: int | None = None
+    seating_capacity: int | None = None
+    dining_capacity: int | None = None
+    floating_capacity: int | None = None
+
+
+class ContactNested(BaseModel):
+    contact_person: str | None = None
+    contact_phone: str | None = None
+    contact_email: str | None = None
+    support_email: str | None = None
+    support_phone: str | None = None
+
+
+class PoliciesNested(BaseModel):
+    smoking_policy: str | None = None
+    alcohol_policy: str | None = None
+    outside_catering: bool = False
+    outside_decorations: bool = False
+    outside_photography: bool = False
+    pets_allowed: bool = False
+    cancellation_policy: str | None = None
+    refund_policy: str | None = None
+
+
+class StatisticsNested(BaseModel):
+    todays_bookings: int = 0
+    upcoming_events: int = 0
+    completed_events: int = 0
+    cancelled_events: int = 0
+    occupancy_percentage: int = 0
+    revenue: float = 0.0
+    average_rating: float = 0.0
+    review_count: int = 0
+
+
+class BookingSummary(BaseModel):
+    today_bookings: int = 0
+    upcoming_bookings: int = 0
+    completed_bookings: int = 0
+    cancelled_bookings: int = 0
+
+
+class AvailabilityStatusNested(BaseModel):
+    label: str = "available"
+    today: str | None = None
+    occupancy_percentage: int = 0
+    available_days: int = 0
+    booked_days: int = 0
+    blocked_days: int = 0
+
+
+class AvailabilitySlotNested(BaseModel):
+    slot_id: uuid.UUID | None = None
+    food_slot_id: uuid.UUID | None = None
+    slot_name: str
+    slot_key: str
+    slot_kind: str = "venue"
+    status: str
+    start_time: str | None = None
+    end_time: str | None = None
+    price: float | None = None
+
+
+class AvailabilityDayNested(BaseModel):
+    date: date
+    status: str
+    slots: list[AvailabilitySlotNested] = Field(default_factory=list)
+
+
+class ReviewItem(BaseModel):
+    id: uuid.UUID
+    customer_name: str
+    rating: int
+    comment: str | None = None
+    event_type: str | None = None
+    created_at: datetime
+    reply: str | None = None
+
+
+class ReviewsBlock(BaseModel):
+    average_rating: float = 0.0
+    total_reviews: int = 0
+    items: list[ReviewItem] = Field(default_factory=list)
+
+
+class FaqItem(BaseModel):
+    id: uuid.UUID
+    question: str
+    answer: str
+    display_order: int = 0
+
+
+class SeoBlock(BaseModel):
+    title: str | None = None
+    description: str | None = None
+    keywords: str | None = None
+    canonical: str | None = None
+
+
+class RelatedVenueItem(BaseModel):
+    id: uuid.UUID
+    venue_code: str
+    venue_name: str
+    city: str | None = None
+    category: str | None = None
+    cover_image_url: str | None = None
+    starting_price: float = 0.0
+    rating: float = 0.0
 
 
 class VenueDetailResponse(BaseModel):
@@ -367,16 +539,30 @@ class VenueDetailResponse(BaseModel):
     created_by: uuid.UUID | None
     updated_by: uuid.UUID | None
     initials: str
+    status: str | None = None
+    business_profile: BusinessProfileNested | None = None
+    owner: OwnerNested | None = None
+    location: LocationNested | None = None
+    capacities: CapacitiesNested | None = None
+    contact: ContactNested | None = None
+    policies: PoliciesNested | None = None
+    statistics: StatisticsNested | None = None
     overview: VenueOverview
-    amenities: list[str] = Field(default_factory=list)
-    services: list[str] = Field(default_factory=list)
-    event_categories: list[str] = Field(default_factory=list)
+    amenities: list[AmenityItem] = Field(default_factory=list)
+    services: list[ServiceItem] = Field(default_factory=list)
+    event_categories: list[EventCategoryItem] = Field(default_factory=list)
     pricing: PricingResponse
     gallery: list[GalleryItemResponse] = Field(default_factory=list)
     documents: list[DocumentResponse] = Field(default_factory=list)
     bookings: list = Field(default_factory=list)
-    reviews: list = Field(default_factory=list)
-    availability: list = Field(default_factory=list)
+    booking_summary: BookingSummary = Field(default_factory=BookingSummary)
+    reviews: ReviewsBlock = Field(default_factory=ReviewsBlock)
+    availability: list[AvailabilityDayNested] = Field(default_factory=list)
+    availability_status_detail: AvailabilityStatusNested | None = None
+    related_venues: list[RelatedVenueItem] = Field(default_factory=list)
+    similar_venues: list[RelatedVenueItem] = Field(default_factory=list)
+    faqs: list[FaqItem] = Field(default_factory=list)
+    seo: SeoBlock | None = None
 
 
 class VenueMutationResponse(BaseModel):

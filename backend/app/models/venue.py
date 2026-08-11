@@ -1,10 +1,11 @@
 import enum
 import uuid
-from datetime import datetime, time
+from datetime import date, datetime, time
 from decimal import Decimal
 
 from sqlalchemy import (
     Boolean,
+    Date,
     DateTime,
     Float,
     ForeignKey,
@@ -16,8 +17,9 @@ from sqlalchemy import (
     Time,
     UniqueConstraint,
     func,
+    text,
 )
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -138,6 +140,10 @@ class Venue(Base):
 
     cover_image_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     video_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    seo_title: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    seo_description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    seo_keywords: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    seo_canonical: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
     created_by: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
@@ -168,13 +174,21 @@ class Venue(Base):
     business_profile: Mapped["BusinessProfile"] = relationship(  # noqa: F821
         "BusinessProfile", foreign_keys=[business_profile_id], lazy="selectin"
     )
-    pricing: Mapped["VenuePricing | None"] = relationship(
+    pricing_records: Mapped[list["VenuePricing"]] = relationship(
         "VenuePricing",
         back_populates="venue",
-        uselist=False,
         lazy="selectin",
-        cascade="all, delete-orphan",
+        cascade="save-update, merge",
+        order_by="VenuePricing.created_at",
     )
+
+    def active_pricing(self) -> "VenuePricing | None":
+        records = [p for p in (self.pricing_records or []) if p.deleted_at is None]
+        active = [p for p in records if p.is_active]
+        pool = active or records
+        if not pool:
+            return None
+        return max(pool, key=lambda p: (p.updated_at or p.created_at, str(p.id)))
     gallery_items: Mapped[list["VenueGalleryItem"]] = relationship(
         "VenueGalleryItem",
         back_populates="venue",
@@ -206,6 +220,20 @@ class Venue(Base):
         lazy="selectin",
         cascade="all, delete-orphan",
     )
+    faqs: Mapped[list["VenueFaq"]] = relationship(
+        "VenueFaq",
+        back_populates="venue",
+        lazy="selectin",
+        cascade="all, delete-orphan",
+        order_by="VenueFaq.display_order",
+    )
+    review_items: Mapped[list["VenueReview"]] = relationship(
+        "VenueReview",
+        back_populates="venue",
+        lazy="selectin",
+        cascade="all, delete-orphan",
+        order_by="VenueReview.created_at.desc()",
+    )
 
 
 class VenueAmenity(Base):
@@ -217,6 +245,8 @@ class VenueAmenity(Base):
     )
     code: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(120), nullable=False)
+    icon: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    category: Mapped[str | None] = mapped_column(String(80), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     display_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(
@@ -259,6 +289,8 @@ class VenueService(Base):
     )
     code: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(120), nullable=False)
+    icon: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     display_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(
@@ -336,6 +368,15 @@ class VenueEventMapping(Base):
 
 class VenueDocument(Base):
     __tablename__ = "venue_documents"
+    __table_args__ = (
+        Index(
+            "uq_venue_documents_type",
+            "venue_id",
+            "document_type",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
@@ -354,6 +395,8 @@ class VenueDocument(Base):
     mime_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
     verified_by: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    expiry_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     uploaded_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -375,6 +418,15 @@ class VenueDocument(Base):
 
 class VenueGalleryItem(Base):
     __tablename__ = "venue_gallery"
+    __table_args__ = (
+        Index(
+            "uq_venue_gallery_url",
+            "venue_id",
+            "image_url",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
@@ -386,9 +438,13 @@ class VenueGalleryItem(Base):
         index=True,
     )
     image_url: Mapped[str] = mapped_column(String(500), nullable=False)
+    thumbnail_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    title: Mapped[str | None] = mapped_column(String(255), nullable=True)
     image_type: Mapped[str] = mapped_column(
         String(50), nullable=False, default="gallery"
     )  # cover | gallery | 360
+    media_type: Mapped[str] = mapped_column(String(30), nullable=False, default="image")
+    is_cover: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     caption: Mapped[str | None] = mapped_column(String(255), nullable=True)
     display_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(
@@ -404,7 +460,7 @@ class VenueGalleryItem(Base):
 class VenuePricing(Base):
     __tablename__ = "venue_pricing"
     __table_args__ = (
-        UniqueConstraint("venue_id", name="uq_venue_pricing_venue_id"),
+        Index("ix_venue_pricing_venue_active", "venue_id", "is_active"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -415,6 +471,10 @@ class VenuePricing(Base):
         ForeignKey("venues.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
+    )
+    name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    schedule_type: Mapped[str] = mapped_column(
+        String(30), nullable=False, default="standard"
     )
     pricing_mode: Mapped[str] = mapped_column(
         String(30), nullable=False, default=PricingMode.FULL_DAY.value
@@ -432,10 +492,22 @@ class VenuePricing(Base):
     booking_window_days: Mapped[int] = mapped_column(Integer, nullable=False, default=180)
     minimum_notice_hours: Mapped[int] = mapped_column(Integer, nullable=False, default=24)
     operating_hours: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    operating_start_time: Mapped[time | None] = mapped_column(Time, nullable=True)
+    operating_end_time: Mapped[time | None] = mapped_column(Time, nullable=True)
     booking_confirmation: Mapped[str] = mapped_column(
         String(30), nullable=False, default="manual"
     )
     cancellation_preset: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    valid_from: Mapped[date | None] = mapped_column(Date, nullable=True)
+    valid_to: Mapped[date | None] = mapped_column(Date, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    extra: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    updated_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -445,26 +517,42 @@ class VenuePricing(Base):
         onupdate=func.now(),
         nullable=False,
     )
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
 
-    venue: Mapped["Venue"] = relationship("Venue", back_populates="pricing")
+    venue: Mapped["Venue"] = relationship("Venue", back_populates="pricing_records")
     slots: Mapped[list["VenueSlot"]] = relationship(
         "VenueSlot",
         back_populates="pricing",
         lazy="selectin",
-        cascade="all, delete-orphan",
+        cascade="save-update, merge",
+        primaryjoin="and_(VenueSlot.venue_pricing_id==VenuePricing.id, VenueSlot.deleted_at.is_(None))",
+        foreign_keys="VenueSlot.venue_pricing_id",
         order_by="VenueSlot.display_order",
     )
     food_slots: Mapped[list["VenueFoodSlot"]] = relationship(
         "VenueFoodSlot",
         back_populates="pricing",
         lazy="selectin",
-        cascade="all, delete-orphan",
+        cascade="save-update, merge",
+        primaryjoin="and_(VenueFoodSlot.venue_pricing_id==VenuePricing.id, VenueFoodSlot.deleted_at.is_(None))",
+        foreign_keys="VenueFoodSlot.venue_pricing_id",
         order_by="VenueFoodSlot.display_order",
     )
 
 
 class VenueSlot(Base):
     __tablename__ = "venue_slots"
+    __table_args__ = (
+        Index(
+            "uq_venue_slots_pricing_key",
+            "venue_pricing_id",
+            "slot_key",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
@@ -489,12 +577,38 @@ class VenueSlot(Base):
     max_guests: Mapped[int | None] = mapped_column(Integer, nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     display_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    extra: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
 
-    pricing: Mapped["VenuePricing"] = relationship("VenuePricing", back_populates="slots")
+    pricing: Mapped["VenuePricing"] = relationship(
+        "VenuePricing",
+        back_populates="slots",
+        foreign_keys=[venue_pricing_id],
+    )
 
 
 class VenueFoodSlot(Base):
     __tablename__ = "venue_food_slots"
+    __table_args__ = (
+        Index(
+            "uq_venue_food_slots_pricing_key",
+            "venue_pricing_id",
+            "meal_key",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
@@ -520,7 +634,88 @@ class VenueFoodSlot(Base):
     maximum_guests: Mapped[int | None] = mapped_column(Integer, nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     display_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    extra: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
 
     pricing: Mapped["VenuePricing"] = relationship(
-        "VenuePricing", back_populates="food_slots"
+        "VenuePricing",
+        back_populates="food_slots",
+        foreign_keys=[venue_pricing_id],
     )
+
+
+class VenueFaq(Base):
+    __tablename__ = "venue_faqs"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    venue_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("venues.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    question: Mapped[str] = mapped_column(String(500), nullable=False)
+    answer: Mapped[str] = mapped_column(Text, nullable=False)
+    display_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    venue: Mapped["Venue"] = relationship("Venue", back_populates="faqs")
+
+
+class VenueReview(Base):
+    __tablename__ = "venue_reviews"
+    __table_args__ = (Index("ix_venue_reviews_venue_created", "venue_id", "created_at"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    venue_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("venues.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    customer_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    customer_name: Mapped[str] = mapped_column(String(150), nullable=False, default="Guest")
+    rating: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
+    comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+    event_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    booking_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    reply: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reply_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    is_published: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    venue: Mapped["Venue"] = relationship("Venue", back_populates="review_items")

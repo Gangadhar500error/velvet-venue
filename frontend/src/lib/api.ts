@@ -22,15 +22,18 @@ async function parseApiError(response: Response): Promise<string> {
   return errorData.error || "API request failed";
 }
 
+const inflightGets = new Map<string, Promise<unknown>>();
+
 /**
- * Make an authenticated API request with automatic token refresh on 401
+ * Make an authenticated API request with automatic token refresh on 401.
+ * Identical in-flight GET requests share one network call (React Strict Mode, parallel mounts).
  */
 export async function apiRequest<T>(
   endpoint: string,
   options: ApiRequestOptions = {}
 ): Promise<T> {
   const { params, retry = true, ...fetchOptions } = options;
-  let token = getAuthToken();
+  const method = String(fetchOptions.method || "GET").toUpperCase();
   const baseUrl = getApiBaseUrl();
 
   let url = `${baseUrl}${endpoint}`;
@@ -46,6 +49,28 @@ export async function apiRequest<T>(
       url += `?${queryString}`;
     }
   }
+
+  if (method === "GET") {
+    const pending = inflightGets.get(url);
+    if (pending) return pending as Promise<T>;
+  }
+
+  const request = executeApiRequest<T>(url, { ...fetchOptions, retry });
+  if (method === "GET") {
+    inflightGets.set(url, request);
+    request.finally(() => {
+      if (inflightGets.get(url) === request) inflightGets.delete(url);
+    });
+  }
+  return request;
+}
+
+async function executeApiRequest<T>(
+  url: string,
+  options: RequestInit & { retry?: boolean }
+): Promise<T> {
+  const { retry = true, ...fetchOptions } = options;
+  let token = getAuthToken();
 
   const makeRequest = async (accessToken: string | null) => {
     const headers: Record<string, string> = {

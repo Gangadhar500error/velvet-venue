@@ -139,14 +139,43 @@ interface ApiDetail {
     availability_status: string;
     opening_hours?: string | null;
   };
-  amenities: string[];
-  services: string[];
-  event_categories: string[];
+  business_profile?: {
+    id: string;
+    business_name: string;
+    business_type?: string | null;
+    logo?: string | null;
+    verified?: boolean;
+  } | null;
+  owner?: {
+    id?: string | null;
+    name?: string;
+    email?: string;
+    phone?: string;
+  } | null;
+  location?: {
+    address_line1?: string | null;
+    address_line2?: string | null;
+    city?: string | null;
+    state?: string | null;
+    country?: string | null;
+    postal_code?: string | null;
+    latitude?: string | null;
+    longitude?: string | null;
+    google_map_url?: string | null;
+    landmark?: string | null;
+  } | null;
+  amenities: Array<string | { id?: string; name?: string; icon?: string; category?: string }>;
+  services: Array<string | { id?: string; name?: string; icon?: string; description?: string }>;
+  event_categories: Array<string | { id?: string; name?: string }>;
   pricing: ApiPricing;
   gallery: Array<{
     id: string;
     image_url: string;
+    thumbnail_url?: string | null;
+    title?: string | null;
     image_type: string;
+    media_type?: string;
+    is_cover?: boolean;
     caption?: string | null;
     display_order: number;
   }>;
@@ -159,8 +188,49 @@ interface ApiDetail {
     file_size?: string | null;
     file_url?: string | null;
     verified_by?: string | null;
+    expiry_date?: string | null;
+    verified_at?: string | null;
     uploaded_date?: string | null;
   }>;
+  booking_summary?: {
+    today_bookings?: number;
+    upcoming_bookings?: number;
+    completed_bookings?: number;
+    cancelled_bookings?: number;
+  };
+  reviews?:
+    | Array<{ id: string; customer_name?: string; rating: number; comment?: string | null }>
+    | {
+        average_rating?: number;
+        total_reviews?: number;
+        items?: Array<{
+          id: string;
+          customer_name: string;
+          rating: number;
+          comment?: string | null;
+          event_type?: string | null;
+          created_at: string;
+          reply?: string | null;
+        }>;
+      };
+  availability?: Array<{
+    date: string;
+    status: string;
+    slots?: Array<{ slot_name: string; status: string }>;
+  }>;
+}
+
+function catalogNames(items: unknown): string[] {
+  if (!Array.isArray(items)) return [];
+  return items
+    .map((item) => {
+      if (typeof item === "string") return item;
+      if (item && typeof item === "object" && "name" in item) {
+        return String((item as { name?: string }).name || "");
+      }
+      return "";
+    })
+    .filter(Boolean);
 }
 
 interface ApiListItem {
@@ -277,7 +347,7 @@ export function mapVenueDetail(api: ApiDetail): Venue {
   const gallery = api.gallery || [];
   const cover =
     api.cover_image_url ||
-    gallery.find((g) => g.image_type === "cover")?.image_url ||
+    gallery.find((g) => g.is_cover || g.image_type === "cover")?.image_url ||
     "";
   const bookingModel = (pricing.pricing_type === "venue_food"
     ? "venue_food"
@@ -293,17 +363,23 @@ export function mapVenueDetail(api: ApiDetail): Venue {
     reviews_count: 0,
     availability_status: api.availability_status,
   };
+  const amenityNames = catalogNames(api.amenities);
+  const eventNames = catalogNames(api.event_categories);
+  const reviewsBlock = Array.isArray(api.reviews)
+    ? { average_rating: overview.average_rating, total_reviews: api.reviews.length, items: api.reviews }
+    : api.reviews || { average_rating: overview.average_rating, total_reviews: overview.reviews_count, items: [] };
+  const bookingSummary = api.booking_summary || {};
 
   return {
     id: api.id,
     venueId: api.venue_code,
     name: api.venue_name,
     businessId: api.business_profile_id,
-    businessName: api.business_name,
-    ownerId: api.owner_id || "",
-    ownerName: api.owner_name,
-    ownerEmail: api.owner_email,
-    ownerPhone: api.owner_phone,
+    businessName: api.business_name || api.business_profile?.business_name || "",
+    ownerId: api.owner_id || api.owner?.id || "",
+    ownerName: api.owner_name || api.owner?.name || "",
+    ownerEmail: api.owner_email || api.owner?.email || "",
+    ownerPhone: api.owner_phone || api.owner?.phone || "",
     supportEmail: api.support_email || "",
     supportPhone: api.support_phone || "",
     category: api.category || "",
@@ -322,15 +398,15 @@ export function mapVenueDetail(api: ApiDetail): Venue {
     galleryImages: gallery.filter((g) => g.image_type === "gallery").map((g) => g.image_url),
     images360: gallery.filter((g) => g.image_type === "360").map((g) => g.image_url),
     videoUrl: api.video_url || "",
-    addressLine1: api.address_line1 || "",
-    addressLine2: api.address_line2 || "",
-    city: api.city || "",
-    state: api.state || "",
-    country: api.country || "",
-    zipCode: api.postal_code || "",
-    mapsLink: api.google_map_url || "",
-    latitude: api.latitude || "",
-    longitude: api.longitude || "",
+    addressLine1: api.address_line1 || api.location?.address_line1 || "",
+    addressLine2: api.address_line2 || api.location?.address_line2 || "",
+    city: api.city || api.location?.city || "",
+    state: api.state || api.location?.state || "",
+    country: api.country || api.location?.country || "",
+    zipCode: api.postal_code || api.location?.postal_code || "",
+    mapsLink: api.google_map_url || api.location?.google_map_url || "",
+    latitude: api.latitude || api.location?.latitude || "",
+    longitude: api.longitude || api.location?.longitude || "",
     seatingCapacity: api.seating_capacity || 0,
     diningCapacity: api.dining_capacity || 0,
     floatingCapacity: api.floating_capacity || 0,
@@ -348,11 +424,12 @@ export function mapVenueDetail(api: ApiDetail): Venue {
     pricingSlots: mapSlots(pricing),
     foodPricing: defaultFoodPricing(),
     foodSlots: mapFoodSlots(pricing),
-    addons: (api.services || []).map((name, i) => ({
-      id: `svc-${i}`,
-      name,
-      active: true,
-    })),
+    addons: (api.services || []).map((item, i) => {
+      if (typeof item === "string") {
+        return { id: `svc-${i}`, name: item, active: true };
+      }
+      return { id: item.id || `svc-${i}`, name: item.name || "", active: true };
+    }),
     minOnlineBookingAmount: 0,
     onlineBookingAmountMode: "percent",
     gstMode: (pricing.gst_mode as "included" | "excluded") || "excluded",
@@ -364,7 +441,7 @@ export function mapVenueDetail(api: ApiDetail): Venue {
     minNoticePeriodHours: pricing.minimum_notice_hours,
     balancePaymentDue: "At venue",
     taxNotes: "",
-    amenities: api.amenities || [],
+    amenities: amenityNames,
     cancellationPolicy: api.cancellation_policy || "",
     refundPolicy: api.refund_policy || "",
     advancePaymentPercent: pricing.advance_percent,
@@ -376,7 +453,7 @@ export function mapVenueDetail(api: ApiDetail): Venue {
     petsAllowed: api.pets_allowed,
     noiseRestrictions: "",
     notes: api.notes || "",
-    nearbyLandmark: api.landmark || "",
+    nearbyLandmark: api.landmark || api.location?.landmark || "",
     contactPerson: api.contact_person || "",
     contactPhone: api.contact_phone || "",
     contactEmail: api.contact_email || "",
@@ -391,14 +468,14 @@ export function mapVenueDetail(api: ApiDetail): Venue {
     outdoorArea: "",
     displayPriority: 0,
     initials: api.initials || "VN",
-    rating: overview.average_rating || 0,
-    totalReviews: overview.reviews_count || 0,
+    rating: reviewsBlock.average_rating || overview.average_rating || 0,
+    totalReviews: reviewsBlock.total_reviews || overview.reviews_count || 0,
     totalBookings: 0,
-    upcomingBookings: overview.upcoming_events || 0,
-    completedBookings: 0,
-    cancelledBookings: 0,
+    upcomingBookings: bookingSummary.upcoming_bookings || overview.upcoming_events || 0,
+    completedBookings: bookingSummary.completed_bookings || 0,
+    cancelledBookings: bookingSummary.cancelled_bookings || 0,
     revenue: overview.revenue || 0,
-    todaysBookings: overview.todays_bookings || 0,
+    todaysBookings: bookingSummary.today_bookings || overview.todays_bookings || 0,
     availabilityLabel:
       (api.availability_status as Venue["availabilityLabel"]) || "available",
     minGuests: api.minimum_guests || 0,
@@ -408,15 +485,26 @@ export function mapVenueDetail(api: ApiDetail): Venue {
     weeklyOff: api.weekly_off || "",
     checkInTime: api.check_in_time || "",
     checkOutTime: api.check_out_time || "",
-    eventCategories: api.event_categories || [],
+    eventCategories: eventNames,
     createdAt: api.created_at,
     updatedAt: api.updated_at,
     createdBy: api.created_by || "",
     updatedBy: api.updated_by || "",
     bookings: [],
-    reviews: [],
+    reviews: (reviewsBlock.items || []).map((item) => ({
+      id: item.id,
+      customerName: item.customer_name || "Guest",
+      rating: item.rating,
+      comment: item.comment || "",
+      date: "created_at" in item ? String(item.created_at || "") : "",
+      eventType: "event_type" in item ? String(item.event_type || "") : "",
+    })),
     documents: mapDocuments(api.documents),
-    availability: [],
+    availability: (api.availability || []).map((day) => ({
+      date: String(day.date),
+      status: day.status as Venue["availability"][number]["status"],
+      slot: (day.slots || []).map((slot) => slot.slot_name).join(", ") || undefined,
+    })),
     ratingDistribution: [],
   };
 }
@@ -554,6 +642,7 @@ export function formToCreatePayload(form: VenueFormValues) {
       booking_confirmation: form.bookingConfirmation || "manual",
       cancellation_preset: form.cancellationPreset || null,
       slots: (form.pricingSlots || []).map((s, i) => ({
+        id: /^[0-9a-f-]{36}$/i.test(s.id) ? s.id : undefined,
         key: s.key,
         name: s.name,
         enabled: s.enabled,
@@ -564,6 +653,7 @@ export function formToCreatePayload(form: VenueFormValues) {
         display_order: i,
       })),
       food_slots: (form.foodSlots || []).map((s, i) => ({
+        id: /^[0-9a-f-]{36}$/i.test(s.id) ? s.id : undefined,
         key: s.key,
         name: s.name,
         enabled: s.enabled,

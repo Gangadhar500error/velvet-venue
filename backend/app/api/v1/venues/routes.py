@@ -15,6 +15,7 @@ from app.core.permissions_catalog import (
 from app.db.session import get_db
 from app.dependencies.permissions import require_permission
 from app.models.user import User
+from app.schemas.pricing import PricingMutationResponse, PricingWriteRequest
 from app.schemas.venue import (
     BookingPreviewRequest,
     BookingPreviewResponse,
@@ -30,6 +31,7 @@ from app.schemas.venue import (
     VenueMutationResponse,
     VenueUpdateRequest,
 )
+from app.services.pricing_service import PricingService
 from app.services.venue_service import VenueService
 
 router = APIRouter(prefix="/venues", tags=["Venues"])
@@ -37,6 +39,10 @@ router = APIRouter(prefix="/venues", tags=["Venues"])
 
 def get_venue_service(db: AsyncSession = Depends(get_db)) -> VenueService:
     return VenueService(db)
+
+
+def get_pricing_service(db: AsyncSession = Depends(get_db)) -> PricingService:
+    return PricingService(db)
 
 
 @router.get("", response_model=VenueListResponse)
@@ -120,9 +126,23 @@ async def delete_venue(
 async def get_venue_pricing(
     venue_id: uuid.UUID,
     current_user: Annotated[User, Depends(require_permission(VENUE_VIEW.code))],
-    service: Annotated[VenueService, Depends(get_venue_service)],
+    service: Annotated[PricingService, Depends(get_pricing_service)],
 ) -> PricingResponse:
-    return await service.get_pricing(current_user, venue_id)
+    return await service.get_venue_pricing(current_user, venue_id)
+
+
+@router.post(
+    "/{venue_id}/pricing",
+    response_model=PricingMutationResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_venue_pricing(
+    venue_id: uuid.UUID,
+    payload: PricingWriteRequest,
+    current_user: Annotated[User, Depends(require_permission(VENUE_UPDATE.code))],
+    service: Annotated[PricingService, Depends(get_pricing_service)],
+) -> PricingMutationResponse:
+    return await service.create_venue_pricing(current_user, venue_id, payload)
 
 
 @router.get("/{venue_id}/gallery")
