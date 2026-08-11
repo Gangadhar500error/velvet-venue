@@ -43,6 +43,9 @@ export interface SearchableSelectProps {
   debounceMs?: number;
   className?: string;
   maxMenuHeight?: number;
+  /** When set, typing calls this with the debounced query instead of filtering locally. */
+  onQueryChange?: (query: string) => void;
+  selectedOption?: SearchableOption | null;
 }
 
 const Z_DROPDOWN = 9999;
@@ -95,6 +98,8 @@ export function SearchableSelect({
   debounceMs = 140,
   className = "",
   maxMenuHeight = 320,
+  onQueryChange,
+  selectedOption,
 }: SearchableSelectProps) {
   const listId = useId();
   const rootRef = useRef<HTMLDivElement>(null);
@@ -111,7 +116,10 @@ export function SearchableSelect({
     null
   );
 
-  const selected = useMemo(() => options.find((o) => o.value === value), [options, value]);
+  const selected = useMemo(
+    () => options.find((o) => o.value === value) || (selectedOption?.value === value ? selectedOption : null),
+    [options, value, selectedOption]
+  );
 
   useEffect(() => setMounted(true), []);
 
@@ -191,14 +199,20 @@ export function SearchableSelect({
     };
   }, [open, close]);
 
+  useEffect(() => {
+    if (!open || !onQueryChange) return;
+    onQueryChange(debounced);
+  }, [open, debounced, onQueryChange]);
+
   const filtered = useMemo(() => {
+    if (onQueryChange) return options;
     const q = debounced.trim().toLowerCase();
     if (!q) return options;
     return options.filter((o) => {
       const hay = `${o.label} ${asLines(o.description).join(" ")} ${o.meta || ""} ${o.keywords || ""}`.toLowerCase();
       return hay.includes(q);
     });
-  }, [options, debounced]);
+  }, [options, debounced, onQueryChange]);
 
   useEffect(() => {
     setActiveIndex(0);

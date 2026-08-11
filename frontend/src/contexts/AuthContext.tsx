@@ -15,10 +15,10 @@ import {
   clearAuth,
   getMe,
   getStoredUser,
-  isAuthenticated,
   saveAuthSession,
   getAccessToken,
   getRefreshToken,
+  refreshAccessToken,
 } from "@/lib/auth";
 import {
   canAccessRoute,
@@ -75,12 +75,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
 
   const loadAuth = useCallback(async () => {
-    if (!isAuthenticated()) {
-      router.replace("/signin");
-      return;
-    }
-
     try {
+      if (!getAccessToken()) {
+        const refreshed = await refreshAccessToken();
+        if (!refreshed) {
+          clearAuth();
+          setUser(null);
+          router.replace("/signin");
+          return;
+        }
+      }
+
       const [me, accessConfig, menuData, dashboardData] = await Promise.all([
         getMe(),
         fetchAccessConfig(),
@@ -104,6 +109,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     } catch {
       clearAuth();
+      setUser(null);
       router.replace("/signin");
     } finally {
       setIsLoading(false);
@@ -169,7 +175,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     ]
   );
 
-  if (isLoading) {
+  if (isLoading || !user || !getAccessToken()) {
     return (
       <div className="h-screen flex items-center justify-center bg-[#0F172A]">
         <Loader2 className="w-8 h-8 animate-spin text-[#C89B3C]" />

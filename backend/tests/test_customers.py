@@ -184,3 +184,92 @@ async def test_customer_forbidden_without_permission(client: AsyncClient):
     response = await client.get(CUSTOMERS_BASE, headers=_auth(token))
     # Customer can view (scoped to self) — should be 200 with 0-1 items
     assert response.status_code in (200, 403)
+
+
+@pytest.mark.asyncio
+async def test_customer_search_uses_users_role_and_rejects_customers(client: AsyncClient):
+    admin = await _login(client, "admin@velvetvenues.com", "Admin@123")
+    suffix = uuid.uuid4().hex[:8]
+    email = f"search_{suffix}@example.com"
+    mobile = f"+9198{uuid.uuid4().int % 10_000_000:07d}"
+    created = await client.post(
+        CUSTOMERS_BASE,
+        headers=_auth(admin),
+        json={
+            "name": f"Searchable {suffix}",
+            "email": email,
+            "phone": mobile,
+            "address": "12 Banjara Hills",
+            "city": "Hyderabad",
+            "state": "Telangana",
+            "country": "India",
+            "return_existing": False,
+        },
+    )
+    assert created.status_code == 201, created.text
+    customer = created.json()["customer"]
+    assert customer["email"] == email
+    assert customer["mobile"] == mobile
+    assert customer["status"] == "active"
+
+    by_name = await client.get(
+        f"{CUSTOMERS_BASE}/search",
+        headers=_auth(admin),
+        params={"q": suffix, "page": 1, "limit": 20},
+    )
+    assert by_name.status_code == 200, by_name.text
+    items = by_name.json()["items"]
+    assert any(row["id"] == customer["id"] for row in items)
+    hit = next(row for row in items if row["id"] == customer["id"])
+    assert hit["full_name"]
+    assert hit["phone"] == mobile
+    assert hit["email"] == email
+    assert hit["customer_code"]
+    assert hit["city"] == "Hyderabad"
+
+    by_phone = await client.get(
+        f"{CUSTOMERS_BASE}/search",
+        headers=_auth(admin),
+        params={"q": mobile[-7:]},
+    )
+    assert by_phone.status_code == 200
+    assert any(row["id"] == customer["id"] for row in by_phone.json()["items"])
+
+    by_email = await client.get(
+        f"{CUSTOMERS_BASE}/search",
+        headers=_auth(admin),
+        params={"q": email},
+    )
+    assert by_email.status_code == 200
+    assert any(row["id"] == customer["id"] for row in by_email.json()["items"])
+
+    by_code = await client.get(
+        f"{CUSTOMERS_BASE}/search",
+        headers=_auth(admin),
+        params={"q": customer["customer_code"]},
+    )
+    assert by_code.status_code == 200
+    assert any(row["id"] == customer["id"] for row in by_code.json()["items"])
+
+    duplicate = await client.post(
+        CUSTOMERS_BASE,
+        headers=_auth(admin),
+        json={
+            "name": f"Searchable {suffix}",
+            "email": email,
+            "phone": mobile,
+            "return_existing": False,
+        },
+    )
+    assert duplicate.status_code == 409
+
+    unauth = await client.get(f"{CUSTOMERS_BASE}/search", params={"q": suffix})
+    assert unauth.status_code in (401, 403)
+
+    customer_token = await _login(client, "customer@velvetvenues.com", "Customer@123")
+    forbidden = await client.get(
+        f"{CUSTOMERS_BASE}/search",
+        headers=_auth(customer_token),
+        params={"q": suffix},
+    )
+    assert forbidden.status_code == 403

@@ -3,8 +3,11 @@ from datetime import UTC, datetime
 
 from sqlalchemy import Select, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.models.customer import Customer, CustomerStatus
+from app.models.role import Role, RoleName
+from app.models.user import User
 
 
 class CustomerRepository:
@@ -174,6 +177,62 @@ class CustomerRepository:
             base.order_by(order).offset(offset).limit(page_size)
         )
         return list(result.scalars().all()), total
+
+    async def search_customers(
+        self,
+        *,
+        query: str | None = None,
+        user_id: uuid.UUID | None = None,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> tuple[list[Customer], int]:
+        stmt = (
+            select(Customer)
+            .join(User, User.id == Customer.user_id)
+            .join(Role, Role.id == User.role_id)
+            .where(
+                *self._not_deleted(),
+                Role.name == RoleName.CUSTOMER,
+                User.is_active.is_(True),
+                Customer.status == CustomerStatus.ACTIVE.value,
+            )
+        )
+        if user_id is not None:
+            stmt = stmt.where(Customer.user_id == user_id)
+        if query and query.strip():
+            raw = query.strip()
+            term = f"%{raw}%"
+            digits = "".join(ch for ch in raw if ch.isdigit())
+            filters = [
+                Customer.full_name.ilike(term),
+                Customer.first_name.ilike(term),
+                Customer.last_name.ilike(term),
+                Customer.customer_code.ilike(term),
+                Customer.email.ilike(term),
+                Customer.mobile.ilike(term),
+                User.full_name.ilike(term),
+                User.email.ilike(term),
+                User.mobile.ilike(term),
+                User.phone.ilike(term),
+            ]
+            if digits:
+                filters.append(Customer.mobile.ilike(f"%{digits}%"))
+                filters.append(User.mobile.ilike(f"%{digits}%"))
+                filters.append(User.phone.ilike(f"%{digits}%"))
+            stmt = stmt.where(or_(*filters))
+        total = int(
+            (await self.db.execute(select(func.count()).select_from(stmt.subquery()))).scalar_one()
+            or 0
+        )
+        page = max(page, 1)
+        page_size = min(max(page_size, 1), 50)
+        result = await self.db.execute(
+            stmt.options(selectinload(Customer.user))
+            .order_by(Customer.full_name.asc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
+        return list(result.scalars().unique().all()), total
 
     async def distinct_cities(self) -> list[str]:
         result = await self.db.execute(

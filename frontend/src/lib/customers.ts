@@ -371,6 +371,37 @@ export function filtersToParams(
   };
 }
 
+export interface CustomerSearchItem {
+  id: string;
+  customer_code: string;
+  first_name?: string;
+  last_name?: string;
+  full_name: string;
+  phone: string;
+  email: string;
+  address?: string | null;
+  city?: string | null;
+  state?: string | null;
+  profile_photo?: string | null;
+  is_verified?: boolean;
+  is_active?: boolean;
+}
+
+export interface CustomerSearchResponse {
+  success: boolean;
+  items: CustomerSearchItem[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+}
+
+export async function searchCustomers(q = "", page = 1, limit = 20) {
+  return apiRequest<CustomerSearchResponse>("/customers/search", {
+    params: { q, page, limit },
+  });
+}
+
 export async function fetchCustomers(params: CustomerListParams = {}) {
   return apiRequest<CustomerListResponse>("/customers", { params: params as Record<string, string | number | null | undefined> });
 }
@@ -379,7 +410,9 @@ export async function fetchCustomer(id: string) {
   return apiRequest<ApiCustomerDetail>(`/customers/${id}`);
 }
 
-export async function createCustomer(payload: ReturnType<typeof formToCreatePayload>) {
+export async function createCustomer(
+  payload: ReturnType<typeof formToCreatePayload> & Record<string, unknown>
+) {
   return apiRequest<CustomerMutationResponse>("/customers", {
     method: "POST",
     body: JSON.stringify(payload),

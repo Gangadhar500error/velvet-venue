@@ -241,6 +241,26 @@ class VenueListResponse(BaseModel):
     total_pages: int
 
 
+class VenueSearchItem(BaseModel):
+    id: uuid.UUID
+    venue_code: str
+    venue_name: str
+    business_name: str
+    city: str | None = None
+    category: str | None = None
+    pricing_mode: str | None = None
+    availability_status: str
+
+
+class VenueSearchResponse(BaseModel):
+    success: bool = True
+    items: list[VenueSearchItem]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+
+
 class VenueOverview(BaseModel):
     todays_bookings: int = 0
     upcoming_events: int = 0

@@ -8,55 +8,6 @@ import {
 } from "./types";
 import { parseFoodSlotKeys, serializeMealGuests } from "./pricing";
 
-export const eventTypeOptions = [
-  "Wedding",
-  "Reception",
-  "Birthday",
-  "Engagement",
-  "Corporate",
-  "Conference",
-  "Baby Shower",
-  "Private Party",
-  "Cocktail",
-  "Other",
-];
-
-export const slotOptions = ["Full Day"];
-
-export const executiveOptions = [
-  "Ananya Iyer",
-  "Rohit Kapoor",
-  "Sneha Nair",
-  "Vikram Singh",
-  "Priya Mehta",
-];
-
-export const businessOptions = [
-  { id: "BIZ-300101", name: "Orchid Events Pvt Ltd" },
-  { id: "BIZ-300102", name: "Patel Celebrations" },
-  { id: "BIZ-300103", name: "Reddy Convention Spaces" },
-  { id: "BIZ-300104", name: "Singh Palace Events" },
-  { id: "BIZ-300105", name: "Coastal Celebrations LLP" },
-];
-
-export const venueOptions = [
-  { id: "1", venueId: "VEN-40011", name: "The Grand Orchid Banquet", businessId: "BIZ-300101", city: "Hyderabad" },
-  { id: "2", venueId: "VEN-40012", name: "Orchid Rooftop Lounge", businessId: "BIZ-300101", city: "Hyderabad" },
-  { id: "4", venueId: "VEN-50001", name: "Patel Grand Celebration Hall", businessId: "BIZ-300102", city: "Karimnagar" },
-  { id: "5", venueId: "VEN-50002", name: "Reddy Convention Centre", businessId: "BIZ-300103", city: "Hyderabad" },
-  { id: "7", venueId: "VEN-50004", name: "Singh Palace Banquet", businessId: "BIZ-300104", city: "Hyderabad" },
-  { id: "8", venueId: "VEN-50005", name: "Coastal Backwater Resort", businessId: "BIZ-300105", city: "Chennai" },
-];
-
-export const customerOptions = [
-  { id: "1", customerId: "CUST-100124", name: "Rahul Sharma", phone: "+91 98765 43210", email: "rahul.sharma@email.com", city: "Hyderabad" },
-  { id: "2", customerId: "CUST-100125", name: "Priya Patel", phone: "+91 98765 43211", email: "priya.patel@email.com", city: "Karimnagar" },
-  { id: "3", customerId: "CUST-100126", name: "Arjun Reddy", phone: "+91 98765 43212", email: "arjun.reddy@email.com", city: "Hyderabad" },
-  { id: "4", customerId: "CUST-100127", name: "Ananya Iyer", phone: "+91 98765 43213", email: "ananya.iyer@email.com", city: "Chennai" },
-  { id: "5", customerId: "CUST-100128", name: "Vikram Singh", phone: "+91 98765 43214", email: "vikram.singh@email.com", city: "Hyderabad" },
-  { id: "6", customerId: "CUST-100129", name: "Sneha Nair", phone: "+91 98765 43215", email: "sneha.nair@email.com", city: "Chennai" },
-];
-
 export const paymentMethodOptions = [
   { value: "cash", label: "Cash" },
   { value: "upi", label: "UPI" },

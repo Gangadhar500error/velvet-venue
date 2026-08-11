@@ -435,7 +435,7 @@ export function getVenueOnlySlotAvailability(
 
     const hasBlockingBooked = bookedRows.some((row) => {
       if (isOwnBookingRow(row)) return false;
-      const rowKey = normalizeSlotKey(row.slot);
+      const rowKey = normalizeSlotKey(row.slotKey || row.slot);
       if (normalized === "full_day") return true;
       return rowKey === "full_day" || rowKey === normalized;
     });
@@ -443,7 +443,7 @@ export function getVenueOnlySlotAvailability(
     if (hasBlockingBooked) return "booked";
 
     const hasBlockingStatus = blockedRows.some((row) => {
-      const rowKey = normalizeSlotKey(row.slot);
+      const rowKey = normalizeSlotKey(row.slotKey || row.slot);
       if (normalized === "full_day") return true;
       return rowKey === "full_day" || rowKey === normalized;
     });
@@ -950,7 +950,7 @@ export function buildVenueFormPatch(
   }
 
   return {
-    venueId: venue.venueId,
+    venueId: venue.id || venue.venueId,
     venueName: venue.name,
     businessId: venue.businessId,
     businessName: venue.businessName || "",

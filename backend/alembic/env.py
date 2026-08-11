@@ -9,6 +9,14 @@ from sqlalchemy.engine import Connection
 from app.core.config import get_settings
 from app.db.base import Base
 from app.models import (  # noqa: F401
+    Booking,
+    BookingActivity,
+    BookingDay,
+    BookingFood,
+    BookingService,
+    BookingSlot,
+    Invoice,
+    Payment,
     BusinessProfile,
     BusinessProfileDocument,
     Customer,

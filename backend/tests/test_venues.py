@@ -152,3 +152,114 @@ async def test_customer_venue_access(client: AsyncClient):
     response = await client.get(VENUES_BASE, headers=_auth(token))
     # Customer may have Venue.View for published, or 403 if not granted
     assert response.status_code in (200, 403)
+
+
+@pytest.mark.asyncio
+async def test_venue_search_published_approved_only(client: AsyncClient):
+    token = await _login(client, "admin@velvetvenues.com", "Admin@123")
+    bp_id = await _first_business_id(client, token)
+    suffix = uuid.uuid4().hex[:6]
+    published_name = f"Bookable Hall {suffix}"
+    draft_name = f"Hidden Draft {suffix}"
+
+    published = await client.post(
+        VENUES_BASE,
+        headers=_auth(token),
+        json={
+            "business_profile_id": bp_id,
+            "venue_name": published_name,
+            "category": "Banquet Hall",
+            "city": "Hyderabad",
+            "venue_status": "published",
+            "approval_status": "approved",
+            "pricing": {
+                "pricing_mode": "full_day",
+                "pricing_type": "venue_only",
+                "gst_percent": 18,
+                "advance_percent": 25,
+                "slots": [
+                    {
+                        "key": "full_day",
+                        "name": "Full Day",
+                        "time_label": "09:00 AM - 11:00 PM",
+                        "price": 40000,
+                        "enabled": True,
+                    }
+                ],
+            },
+        },
+    )
+    assert published.status_code == 201, published.text
+    published_id = published.json()["venue"]["id"]
+    venue_code = published.json()["venue"]["venue_code"]
+
+    draft = await client.post(
+        VENUES_BASE,
+        headers=_auth(token),
+        json={
+            "business_profile_id": bp_id,
+            "venue_name": draft_name,
+            "category": "Banquet Hall",
+            "city": "Hyderabad",
+            "venue_status": "draft",
+            "approval_status": "pending",
+            "pricing": {
+                "pricing_mode": "full_day",
+                "pricing_type": "venue_only",
+                "slots": [
+                    {
+                        "key": "full_day",
+                        "name": "Full Day",
+                        "price": 10000,
+                        "enabled": True,
+                    }
+                ],
+            },
+        },
+    )
+    assert draft.status_code == 201, draft.text
+    draft_id = draft.json()["venue"]["id"]
+
+    found = await client.get(
+        f"{VENUES_BASE}/search",
+        headers=_auth(token),
+        params={"q": suffix, "page": 1, "limit": 20},
+    )
+    assert found.status_code == 200, found.text
+    ids = {row["id"] for row in found.json()["items"]}
+    assert published_id in ids
+    assert draft_id not in ids
+    hit = next(row for row in found.json()["items"] if row["id"] == published_id)
+    assert hit["venue_name"] == published_name
+    assert hit["venue_code"] == venue_code
+    assert hit["city"] == "Hyderabad"
+    assert hit["category"] == "Banquet Hall"
+    assert hit["pricing_mode"] == "full_day"
+    assert hit["availability_status"] != "blocked"
+
+    by_code = await client.get(
+        f"{VENUES_BASE}/search",
+        headers=_auth(token),
+        params={"q": venue_code},
+    )
+    assert by_code.status_code == 200
+    assert any(row["id"] == published_id for row in by_code.json()["items"])
+
+    by_category = await client.get(
+        f"{VENUES_BASE}/search",
+        headers=_auth(token),
+        params={"q": "Banquet Hall"},
+    )
+    assert by_category.status_code == 200
+    assert any(row["id"] == published_id for row in by_category.json()["items"])
+
+    unauth = await client.get(f"{VENUES_BASE}/search", params={"q": suffix})
+    assert unauth.status_code in (401, 403)
+
+    customer = await _login(client, "customer@velvetvenues.com", "Customer@123")
+    forbidden = await client.get(
+        f"{VENUES_BASE}/search",
+        headers=_auth(customer),
+        params={"q": suffix},
+    )
+    assert forbidden.status_code == 403

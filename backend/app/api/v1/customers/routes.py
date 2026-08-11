@@ -18,6 +18,7 @@ from app.schemas.customer import (
     CustomerDetailResponse,
     CustomerListResponse,
     CustomerMutationResponse,
+    CustomerSearchResponse,
     CustomerUpdateRequest,
     FindOrCreateCustomerRequest,
     MessageResponse,
@@ -68,6 +69,23 @@ async def list_customers(
         sort_dir=sort_dir,
         page=page,
         page_size=page_size,
+    )
+
+
+@router.get(
+    "/search",
+    response_model=CustomerSearchResponse,
+    summary="Typeahead search of customers linked to CUSTOMER role users",
+)
+async def search_customers(
+    current_user: Annotated[User, Depends(require_permission(CUSTOMER_VIEW.code))],
+    service: Annotated[CustomerService, Depends(get_customer_service)],
+    q: str | None = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    limit: int = Query(default=20, ge=1, le=50),
+) -> CustomerSearchResponse:
+    return await service.search_customers(
+        current_user, query=q, page=page, page_size=limit
     )
 
 

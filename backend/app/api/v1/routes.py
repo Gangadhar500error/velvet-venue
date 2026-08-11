@@ -8,6 +8,7 @@ from app.api.v1.venue_owners.routes import router as venue_owners_router
 from app.api.v1.availability.routes import block_router as availability_block_router
 from app.api.v1.availability.routes import venue_router as venue_availability_router
 from app.api.v1.pricing.routes import router as pricing_router
+from app.api.v1.bookings.routes import router as bookings_router
 from app.api.v1.venues.routes import router as venues_router
 from app.core.config import get_settings
 
@@ -21,6 +22,7 @@ router.include_router(venues_router)
 router.include_router(venue_availability_router)
 router.include_router(availability_block_router)
 router.include_router(pricing_router)
+router.include_router(bookings_router)
 router.include_router(rbac_router)
 
 

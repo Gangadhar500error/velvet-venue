@@ -1,3 +1,13 @@
+from app.models.booking import (
+    Booking,
+    BookingActivity,
+    BookingDay,
+    BookingFood,
+    BookingService,
+    BookingSlot,
+    Invoice,
+    Payment,
+)
 from app.models.availability import (
     VenueAvailability,
     VenueAvailabilityBlock,
@@ -28,6 +38,14 @@ from app.models.venue import (
 from app.models.venue_owner import VenueOwner
 
 __all__ = [
+    "Booking",
+    "BookingActivity",
+    "BookingDay",
+    "BookingFood",
+    "BookingService",
+    "BookingSlot",
+    "Invoice",
+    "Payment",
     "BusinessProfile",
     "BusinessProfileDocument",
     "Customer",

@@ -16,12 +16,17 @@ from app.models.user import User
 from app.repositories.customer_repository import CustomerRepository
 from app.repositories.role_repository import RoleRepository
 from app.repositories.user_repository import UserRepository
+from app.repositories.booking_repository import BookingRepository
 from app.schemas.customer import (
+    CustomerBookingSummary,
     CustomerCreateRequest,
     CustomerDetailResponse,
+    CustomerInvoiceSummary,
     CustomerListItem,
     CustomerListResponse,
     CustomerMutationResponse,
+    CustomerSearchItem,
+    CustomerSearchResponse,
     CustomerOverview,
     CustomerUpdateRequest,
     FindOrCreateCustomerRequest,
@@ -38,6 +43,7 @@ class CustomerService:
         self.repo = CustomerRepository(db)
         self.users = UserRepository(db)
         self.roles = RoleRepository(db)
+        self.bookings = BookingRepository(db)
         self.permissions = PermissionService(db)
 
     def _assert_access(self, actor: User, customer: Customer) -> None:
@@ -60,8 +66,29 @@ class CustomerService:
         return None
 
     async def _compute_overview(self, customer_id: uuid.UUID) -> CustomerOverview:
-        _ = customer_id
-        return CustomerOverview()
+        _rows, total = await self.bookings.list_bookings(
+            customer_id=customer_id, page=1, page_size=1
+        )
+        recent = await self.bookings.list_recent_for_customer(customer_id, limit=50)
+        spend = sum(float(b.paid_amount or 0) for b in recent)
+        pending = sum(float(b.remaining_amount or 0) for b in recent)
+        last = recent[0].start_date if recent else None
+        upcoming = sum(
+            1 for b in recent if b.booking_status in {"pending", "confirmed", "checked_in"}
+        )
+        completed = sum(1 for b in recent if b.booking_status == "completed")
+        cancelled = sum(1 for b in recent if b.booking_status in {"cancelled", "rejected"})
+        return CustomerOverview(
+            total_bookings=total,
+            upcoming_bookings=upcoming,
+            completed_bookings=completed,
+            cancelled_bookings=cancelled,
+            lifetime_spend=spend,
+            total_paid=spend,
+            pending_amount=pending,
+            last_booking_date=last,
+            average_booking=(spend / total) if total else 0.0,
+        )
 
     def _to_list_item(self, customer: Customer) -> CustomerListItem:
         return CustomerListItem(
@@ -126,8 +153,45 @@ class CustomerService:
             user_id=customer.user_id,
             initials=_initials(customer.full_name),
             overview=overview,
-            recent_bookings=[],
-            recent_invoices=[],
+            recent_bookings=[
+                CustomerBookingSummary(
+                    id=b.id,
+                    booking_code=b.booking_number,
+                    venue_name=b.venue.venue_name if b.venue else "",
+                    event_type=b.event_type or "",
+                    booking_date=b.booking_date,
+                    event_date=b.start_date,
+                    guests=b.guest_count,
+                    amount=float(b.total_amount),
+                    payment_status=(
+                        "paid"
+                        if b.payment_status == "paid"
+                        else "refunded"
+                        if b.payment_status == "refunded"
+                        else "failed"
+                        if b.payment_status == "failed"
+                        else "pending"
+                    ),
+                    booking_status=(
+                        "cancelled"
+                        if b.booking_status in {"cancelled", "rejected"}
+                        else "completed"
+                        if b.booking_status in {"completed", "refunded"}
+                        else "upcoming"
+                    ),
+                )
+                for b in await self.bookings.list_recent_for_customer(customer.id)
+            ],
+            recent_invoices=[
+                CustomerInvoiceSummary(
+                    id=i.id,
+                    invoice_number=i.invoice_number,
+                    amount=float(i.amount),
+                    status=i.invoice_status,
+                    issued_at=i.issued_at,
+                )
+                for i in await self.bookings.list_recent_invoices_for_customer(customer.id)
+            ],
             reviews=[],
             existed=existed,
         )
@@ -261,6 +325,62 @@ class CustomerService:
             total_pages=total_pages,
         )
 
+    def _to_search_item(self, customer: Customer) -> CustomerSearchItem:
+        address = ", ".join(
+            part
+            for part in (
+                customer.address_line1,
+                customer.address_line2,
+                customer.city,
+                customer.state,
+            )
+            if part
+        )
+        user = customer.user
+        return CustomerSearchItem(
+            id=customer.id,
+            customer_code=customer.customer_code,
+            first_name=customer.first_name,
+            last_name=customer.last_name,
+            full_name=customer.full_name,
+            phone=customer.mobile,
+            email=customer.email,
+            address=address or None,
+            city=customer.city,
+            state=customer.state,
+            profile_photo=customer.profile_image,
+            is_verified=bool(user.is_verified) if user else customer.verification_status == "verified",
+            is_active=bool(user.is_active) if user else customer.status == "active",
+        )
+
+    async def search_customers(
+        self,
+        actor: User,
+        *,
+        query: str | None = None,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> CustomerSearchResponse:
+        if self.permissions.get_data_scope(actor) == DataScope.CUSTOMER_OWNED:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Customers cannot search the booking customer directory.",
+            )
+        rows, total = await self.repo.search_customers(
+            query=query,
+            user_id=None,
+            page=page,
+            page_size=page_size,
+        )
+        total_pages = max(1, math.ceil(total / page_size)) if page_size else 1
+        return CustomerSearchResponse(
+            items=[self._to_search_item(row) for row in rows],
+            total=total,
+            page=page,
+            page_size=page_size,
+            total_pages=total_pages,
+        )
+
     async def get_customer(
         self, actor: User, customer_id: uuid.UUID
     ) -> CustomerDetailResponse:
@@ -323,13 +443,19 @@ class CustomerService:
         first = payload.first_name or ""
         last = payload.last_name or ""
         full_name = f"{first} {last}".strip()
+        mobile = payload.mobile or payload.phone or ""
+        if not mobile:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="mobile or phone is required.",
+            )
 
         user, _created_user = await self._resolve_or_create_user(
             actor=actor,
             first_name=first,
             last_name=last,
             email=payload.email,
-            mobile=payload.mobile,
+            mobile=mobile,
             email_verified=payload.email_verified,
             mobile_verified=payload.mobile_verified,
             status=payload.status if payload.status != "deleted" else "inactive",
@@ -357,7 +483,7 @@ class CustomerService:
             last_name=last,
             full_name=full_name,
             email=payload.email,
-            mobile=payload.mobile,
+            mobile=mobile,
             alternate_mobile=payload.alternate_mobile,
             gender=payload.gender,
             date_of_birth=payload.date_of_birth,

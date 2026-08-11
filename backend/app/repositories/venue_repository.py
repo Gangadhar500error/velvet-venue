@@ -13,6 +13,7 @@ from app.models.venue import (
     Venue,
     VenueAmenity,
     VenueAmenityMapping,
+    VenueAvailabilityStatus,
     VenueEventMapping,
     VenuePricing,
     VenueService,
@@ -155,6 +156,7 @@ class VenueRepository:
         business_profile_id: uuid.UUID | None = None,
         venue_owner_id: uuid.UUID | None = None,
         published_only: bool = False,
+        exclude_blocked: bool = False,
         date_from: datetime | None = None,
         date_to: datetime | None = None,
     ) -> Select:
@@ -169,6 +171,10 @@ class VenueRepository:
                 Venue.venue_status == VenueStatus.PUBLISHED.value,
                 Venue.approval_status == "approved",
             )
+        if exclude_blocked:
+            stmt = stmt.where(
+                Venue.availability_status != VenueAvailabilityStatus.BLOCKED.value
+            )
         if venue_owner_id is not None:
             stmt = stmt.where(BusinessProfile.venue_owner_id == venue_owner_id)
         if business_profile_id is not None:
@@ -180,6 +186,7 @@ class VenueRepository:
                     Venue.venue_name.ilike(q),
                     Venue.venue_code.ilike(q),
                     Venue.city.ilike(q),
+                    Venue.category.ilike(q),
                     BusinessProfile.business_name.ilike(q),
                 )
             )
@@ -211,6 +218,7 @@ class VenueRepository:
         business_profile_id: uuid.UUID | None = None,
         venue_owner_id: uuid.UUID | None = None,
         published_only: bool = False,
+        exclude_blocked: bool = False,
         date_from: datetime | None = None,
         date_to: datetime | None = None,
         sort_by: str = "venue_name",
@@ -228,6 +236,7 @@ class VenueRepository:
             business_profile_id=business_profile_id,
             venue_owner_id=venue_owner_id,
             published_only=published_only,
+            exclude_blocked=exclude_blocked,
             date_from=date_from,
             date_to=date_to,
         )

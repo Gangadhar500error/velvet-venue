@@ -3,6 +3,7 @@ import uuid
 from datetime import UTC, date, datetime, timedelta
 
 from fastapi import HTTPException, UploadFile, status as http_status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.storage import save_venue_upload_file
@@ -22,6 +23,7 @@ from app.repositories.availability_repository import (
     AvailabilityRepository,
     AvailabilitySlotRepository,
 )
+from app.repositories.booking_repository import BookingRepository
 from app.repositories.business_profile_repository import BusinessProfileRepository
 from app.repositories.venue_owner_repository import VenueOwnerRepository
 from app.repositories.venue_repository import VenueRepository
@@ -58,6 +60,8 @@ from app.schemas.venue import (
     VenueDetailResponse,
     VenueListItem,
     VenueListResponse,
+    VenueSearchItem,
+    VenueSearchResponse,
     VenueMutationResponse,
     VenueOverview,
     VenueUpdateRequest,
@@ -88,6 +92,7 @@ class VenueService:
         self.repo = VenueRepository(db)
         self.profiles = BusinessProfileRepository(db)
         self.owners = VenueOwnerRepository(db)
+        self.bookings = BookingRepository(db)
         self.permissions = PermissionService(db)
         self.pricing = PricingService(db)
         self.availability_days = AvailabilityRepository(db)
@@ -760,6 +765,55 @@ class VenueService:
             total_pages=total_pages,
         )
 
+    def _to_search_item(self, venue: Venue) -> VenueSearchItem:
+        profile = venue.business_profile
+        pricing = venue.active_pricing()
+        return VenueSearchItem(
+            id=venue.id,
+            venue_code=venue.venue_code,
+            venue_name=venue.venue_name,
+            business_name=profile.business_name if profile else "",
+            city=venue.city,
+            category=venue.category,
+            pricing_mode=pricing.pricing_mode if pricing else None,
+            availability_status=venue.availability_status,
+        )
+
+    async def search_bookable_venues(
+        self,
+        actor: User,
+        *,
+        query: str | None = None,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> VenueSearchResponse:
+        if self._is_customer_scope(actor):
+            raise HTTPException(
+                status_code=http_status.HTTP_403_FORBIDDEN,
+                detail="Customers cannot search venues from Booking Create.",
+            )
+        owner_id = await self._vendor_owner_id(actor)
+        rows, total = await self.repo.list_venues(
+            search=query,
+            venue_status=VenueStatus.PUBLISHED.value,
+            approval_status="approved",
+            venue_owner_id=owner_id,
+            published_only=True,
+            exclude_blocked=True,
+            sort_by="venue_name",
+            sort_dir="asc",
+            page=page,
+            page_size=page_size,
+        )
+        total_pages = max(1, math.ceil(total / page_size)) if page_size else 1
+        return VenueSearchResponse(
+            items=[self._to_search_item(venue) for venue in rows],
+            total=total,
+            page=page,
+            page_size=page_size,
+            total_pages=total_pages,
+        )
+
     async def get_venue(self, actor: User, venue_id: uuid.UUID) -> VenueDetailResponse:
         venue = await self.repo.get_by_id(venue_id)
         if venue is None:
@@ -940,9 +994,23 @@ class VenueService:
                 status_code=http_status.HTTP_403_FORBIDDEN,
                 detail="Customers cannot delete venues.",
             )
-        # Bookings/invoices/payments modules not present yet.
-        await self.repo.soft_delete(venue, updated_by=actor.id)
-        await self.db.commit()
+        booking_count = await self.bookings.count_for_venue(venue.id, include_deleted=True)
+        try:
+            await self.repo.soft_delete(venue, updated_by=actor.id)
+            await self.db.commit()
+        except IntegrityError as exc:
+            await self.db.rollback()
+            raise HTTPException(
+                status_code=http_status.HTTP_409_CONFLICT,
+                detail=(
+                    "Cannot remove this venue while bookings exist. "
+                    "Delete or cancel those bookings first."
+                ),
+            ) from exc
+        if booking_count:
+            return MessageResponse(
+                message="Venue archived. Existing bookings were kept and still reference this venue."
+            )
         return MessageResponse(message="Venue deleted successfully.")
 
     async def get_pricing(self, actor: User, venue_id: uuid.UUID) -> PricingResponse:

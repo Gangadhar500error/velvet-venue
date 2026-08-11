@@ -36,8 +36,10 @@ export function getStoredUser(): AuthUser | null {
 }
 
 export function isAuthenticated(): boolean {
-  return Boolean(getAccessToken());
+  return Boolean(getAccessToken() || getRefreshToken());
 }
+
+let refreshInFlight: Promise<string | null> | null = null;
 
 export function clearAuth(): void {
   if (typeof window === "undefined") return;
@@ -120,15 +122,23 @@ export async function signup(payload: SignupPayload): Promise<MessageResponse> {
 }
 
 export async function getMe(): Promise<MeResponse> {
-  const token = getAccessToken();
+  const request = async (token: string) =>
+    fetch(`${getApiBaseUrl()}/auth/me`, {
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+  let token = getAccessToken() || (await refreshAccessToken());
   if (!token) throw new Error("Not authenticated");
 
-  const response = await fetch(`${getApiBaseUrl()}/auth/me`, {
-    headers: {
-      Accept: "application/json",
-      Authorization: `Bearer ${token}`,
-    },
-  });
+  let response = await request(token);
+  if (response.status === 401) {
+    const next = await refreshAccessToken();
+    if (!next) throw new Error(await parseApiError(response));
+    response = await request(next);
+  }
 
   if (!response.ok) {
     throw new Error(await parseApiError(response));
@@ -153,26 +163,34 @@ export async function getMe(): Promise<MeResponse> {
 }
 
 export async function refreshAccessToken(): Promise<string | null> {
-  const refreshToken = getRefreshToken();
-  if (!refreshToken) return null;
+  if (refreshInFlight) return refreshInFlight;
 
-  const response = await fetch(`${getApiBaseUrl()}/auth/refresh`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "application/json",
-    },
-    body: JSON.stringify({ refresh_token: refreshToken }),
+  refreshInFlight = (async () => {
+    const refreshToken = getRefreshToken();
+    if (!refreshToken) return null;
+
+    const response = await fetch(`${getApiBaseUrl()}/auth/refresh`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify({ refresh_token: refreshToken }),
+    });
+
+    if (!response.ok) return null;
+
+    const data = await response.json();
+    if (data.access_token) {
+      localStorage.setItem(AUTH_TOKEN_KEY, data.access_token);
+      return data.access_token as string;
+    }
+    return null;
+  })().finally(() => {
+    refreshInFlight = null;
   });
 
-  if (!response.ok) return null;
-
-  const data = await response.json();
-  if (data.access_token) {
-    localStorage.setItem(AUTH_TOKEN_KEY, data.access_token);
-    return data.access_token;
-  }
-  return null;
+  return refreshInFlight;
 }
 
 export async function logout(): Promise<void> {

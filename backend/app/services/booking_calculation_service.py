@@ -53,19 +53,27 @@ class BookingCalculationService:
         *,
         venue_price: Decimal = Decimal("0"),
         food_total: Decimal = Decimal("0"),
+        service_total: Decimal = Decimal("0"),
         gst_percent: Decimal = Decimal("0"),
         advance_percent: Decimal = Decimal("0"),
+        gst_mode: str = "excluded",
+        discount: Decimal = Decimal("0"),
     ) -> BookingSummary:
         venue_price = Decimal(venue_price or 0)
         food_total = Decimal(food_total or 0)
+        service_total = Decimal(service_total or 0)
         gst_percent = Decimal(gst_percent or 0)
         advance_percent = Decimal(advance_percent or 0)
-        subtotal = venue_price + food_total
-        gst_extra = (
-            money_round(subtotal * gst_percent / Decimal("100"))
-            if gst_percent > 0 and subtotal > 0
-            else Decimal("0")
-        )
+        discount = max(Decimal(discount or 0), Decimal("0"))
+        subtotal = max(venue_price + food_total + service_total - discount, Decimal("0"))
+        if gst_mode == "included":
+            gst_extra = Decimal("0")
+        else:
+            gst_extra = (
+                money_round(subtotal * gst_percent / Decimal("100"))
+                if gst_percent > 0 and subtotal > 0
+                else Decimal("0")
+            )
         booking_total = subtotal + gst_extra
         advance = min(
             money_round(booking_total * advance_percent / Decimal("100"))

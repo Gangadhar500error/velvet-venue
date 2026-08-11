@@ -2,7 +2,7 @@
  * API utility functions for making authenticated requests
  */
 
-import { getAccessToken, refreshAccessToken, clearAuth } from "@/lib/auth";
+import { getAccessToken, getRefreshToken, refreshAccessToken, clearAuth } from "@/lib/auth";
 
 const getApiBaseUrl = (): string => {
   return process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000/api/v1";
@@ -19,6 +19,9 @@ async function parseApiError(response: Response): Promise<string> {
   }));
   if (typeof errorData.message === "string") return errorData.message;
   if (typeof errorData.detail === "string") return errorData.detail;
+  if (Array.isArray(errorData.detail) && errorData.detail[0]?.msg) {
+    return String(errorData.detail[0].msg);
+  }
   return errorData.error || "API request failed";
 }
 
@@ -71,6 +74,9 @@ async function executeApiRequest<T>(
 ): Promise<T> {
   const { retry = true, ...fetchOptions } = options;
   let token = getAuthToken();
+  if (!token && getRefreshToken()) {
+    token = await refreshAccessToken();
+  }
 
   const makeRequest = async (accessToken: string | null) => {
     const headers: Record<string, string> = {

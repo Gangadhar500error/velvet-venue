@@ -37,7 +37,9 @@ class CustomerCreateRequest(BaseModel):
     last_name: str | None = Field(default=None, max_length=100)
     name: str | None = Field(default=None, max_length=200, description="Full name shortcut")
     email: EmailStr
-    mobile: str = Field(..., min_length=7, max_length=20)
+    mobile: str | None = Field(default=None, min_length=7, max_length=20)
+    phone: str | None = Field(default=None, min_length=7, max_length=20, description="Alias for mobile")
+    address: str | None = Field(default=None, description="Alias for address_line1")
     alternate_mobile: str | None = Field(default=None, max_length=20)
     gender: GenderLiteral | None = None
     date_of_birth: date | None = None
@@ -66,9 +68,11 @@ class CustomerCreateRequest(BaseModel):
     def normalize_email(cls, value: str) -> str:
         return value.lower().strip()
 
-    @field_validator("mobile")
+    @field_validator("mobile", "phone")
     @classmethod
-    def normalize_mobile_required(cls, value: str) -> str:
+    def normalize_mobile_required(cls, value: str | None) -> str | None:
+        if value is None or not str(value).strip():
+            return None
         cleaned = "".join(ch for ch in str(value).strip() if ch.isdigit() or ch == "+")
         if len(cleaned) < 7:
             raise ValueError("mobile must be at least 7 digits")
@@ -83,12 +87,18 @@ class CustomerCreateRequest(BaseModel):
 
     @model_validator(mode="after")
     def resolve_names(self) -> "CustomerCreateRequest":
+        if self.phone and not self.mobile:
+            self.mobile = self.phone
+        if self.address and not self.address_line1:
+            self.address_line1 = self.address
         if self.name and not (self.first_name or self.last_name):
             first, last = _split_name(self.name)
             self.first_name = first
             self.last_name = last
         if not self.first_name:
             raise ValueError("first_name or name is required")
+        if not self.mobile:
+            raise ValueError("mobile or phone is required")
         if self.last_name is None:
             self.last_name = ""
         return self
@@ -160,6 +170,31 @@ class CustomerListItem(BaseModel):
 class CustomerListResponse(BaseModel):
     success: bool = True
     items: list[CustomerListItem]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+
+
+class CustomerSearchItem(BaseModel):
+    id: uuid.UUID
+    customer_code: str
+    first_name: str = ""
+    last_name: str = ""
+    full_name: str
+    phone: str
+    email: str
+    address: str | None = None
+    city: str | None = None
+    state: str | None = None
+    profile_photo: str | None = None
+    is_verified: bool = False
+    is_active: bool = True
+
+
+class CustomerSearchResponse(BaseModel):
+    success: bool = True
+    items: list[CustomerSearchItem]
     total: int
     page: int
     page_size: int

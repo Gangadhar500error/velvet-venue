@@ -702,14 +702,57 @@ export function filtersToParams(
   };
 }
 
+export interface VenueSearchItem {
+  id: string;
+  venue_code: string;
+  venue_name: string;
+  business_name: string;
+  city?: string | null;
+  category?: string | null;
+  pricing_mode?: string | null;
+  availability_status: string;
+}
+
+export interface VenueSearchResponse {
+  success: boolean;
+  items: VenueSearchItem[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+}
+
+export async function searchVenues(q = "", page = 1, limit = 20) {
+  return apiRequest<VenueSearchResponse>("/venues/search", {
+    params: { q, page, limit },
+  });
+}
+
 export async function fetchVenues(params: VenueListParams = {}) {
   return apiRequest<ListResponse>("/venues", {
     params: params as Record<string, string | number | null | undefined>,
   });
 }
 
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+export function isVenueUuid(value: string) {
+  return UUID_RE.test(value.trim());
+}
+
 export async function fetchVenue(id: string) {
-  return apiRequest<ApiDetail>(`/venues/${id}`);
+  const key = id.trim();
+  if (isVenueUuid(key)) {
+    return apiRequest<ApiDetail>(`/venues/${key}`);
+  }
+  const found = await searchVenues(key, 1, 5);
+  const match =
+    found.items.find((row) => row.venue_code === key || row.id === key) || found.items[0];
+  if (!match) {
+    throw new Error("Venue not found.");
+  }
+  return apiRequest<ApiDetail>(`/venues/${match.id}`);
 }
 
 export async function createVenue(

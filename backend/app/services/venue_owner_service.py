@@ -16,8 +16,10 @@ from app.repositories.role_repository import RoleRepository
 from app.repositories.user_repository import UserRepository
 from app.repositories.venue_owner_repository import VenueOwnerRepository
 from app.repositories.business_profile_repository import BusinessProfileRepository
+from app.repositories.booking_repository import BookingRepository
 from app.repositories.venue_repository import VenueRepository
 from app.schemas.venue_owner import (
+    BookingSummary,
     VenueOwnerCreateRequest,
     VenueOwnerDetailResponse,
     VenueOwnerListItem,
@@ -43,6 +45,7 @@ class VenueOwnerService:
         self.permissions = PermissionService(db)
         self.business_profiles = BusinessProfileRepository(db)
         self.venues_repo = VenueRepository(db)
+        self.bookings = BookingRepository(db)
 
     def _assert_access(self, actor: User, owner: VenueOwner) -> None:
         scope = self.permissions.get_data_scope(actor)
@@ -175,7 +178,26 @@ class VenueOwnerService:
                 )
                 for v in venues
             ],
-            recent_bookings=[],
+            recent_bookings=[
+                BookingSummary(
+                    id=b.id,
+                    booking_code=b.booking_number,
+                    customer_name=b.customer.full_name if b.customer else "",
+                    venue_name=b.venue.venue_name if b.venue else "",
+                    event_date=b.start_date,
+                    amount=float(b.total_amount),
+                    status=(
+                        "cancelled"
+                        if b.booking_status in {"cancelled", "rejected"}
+                        else "completed"
+                        if b.booking_status in {"completed", "refunded"}
+                        else "pending"
+                        if b.booking_status == "pending"
+                        else "upcoming"
+                    ),
+                )
+                for b in await self.bookings.list_recent_for_vendor(owner.id)
+            ],
             existed=existed,
         )
 

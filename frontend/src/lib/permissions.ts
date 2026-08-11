@@ -1,42 +1,20 @@
-import { getAccessToken } from "@/lib/auth";
+import { apiRequest } from "@/lib/api";
 import type {
   AccessConfigResponse,
   DashboardResponse,
   MenusResponse,
 } from "@/types/permissions";
 
-const getApiBaseUrl = (): string =>
-  process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000/api/v1";
-
-async function authFetch<T>(path: string): Promise<T> {
-  const token = getAccessToken();
-  if (!token) throw new Error("Not authenticated");
-
-  const response = await fetch(`${getApiBaseUrl()}${path}`, {
-    headers: {
-      Accept: "application/json",
-      Authorization: `Bearer ${token}`,
-    },
-  });
-
-  if (!response.ok) {
-    const data = await response.json().catch(() => ({}));
-    throw new Error(data.message || "Request failed");
-  }
-
-  return response.json();
-}
-
 export async function fetchMenus(): Promise<MenusResponse> {
-  return authFetch<MenusResponse>("/auth/menus");
+  return apiRequest<MenusResponse>("/auth/menus");
 }
 
 export async function fetchDashboardConfig(): Promise<DashboardResponse> {
-  return authFetch<DashboardResponse>("/auth/dashboard");
+  return apiRequest<DashboardResponse>("/auth/dashboard");
 }
 
 export async function fetchAccessConfig(): Promise<AccessConfigResponse> {
-  return authFetch<AccessConfigResponse>("/auth/access-config");
+  return apiRequest<AccessConfigResponse>("/auth/access-config");
 }
 
 /** Longest-prefix match for route → required permission code */

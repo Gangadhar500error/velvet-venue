@@ -1,13 +1,10 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { useMemo } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Filter, RotateCcw, Save, X } from "lucide-react";
 import { Button } from "../../_components/ui/Button";
 import { BookingFilters } from "../types";
-import { executiveOptions } from "../data";
-import { useDemoStore } from "../../store/demoStore";
 
 interface FilterPanelProps {
   open: boolean;
@@ -33,17 +30,6 @@ export function FilterPanel({
   onSave,
   activeCount = 0,
 }: FilterPanelProps) {
-  const businesses = useDemoStore((s) => s.businesses);
-  const venues = useDemoStore((s) => s.venues);
-  const businessOptions = useMemo(
-    () =>
-      businesses
-        .filter((b) => String(b.status || "").toLowerCase() !== "inactive")
-        .map((b) => ({ id: b.businessId, name: b.businessName })),
-    [businesses]
-  );
-  const venueOptions = useMemo(() => venues.map((v) => ({ name: v.name })), [venues]);
-
   return (
     <AnimatePresence initial={false}>
       {open && (
@@ -82,24 +68,12 @@ export function FilterPanel({
               <Field label="Phone">
                 <input className={inputClass} value={filters.phone} onChange={(e) => onChange("phone", e.target.value)} placeholder="+91…" />
               </Field>
-              <SelectField
-                label="Venue"
-                value={filters.venue}
-                onChange={(v) => onChange("venue", v)}
-                options={[
-                  { value: "", label: "All Venues" },
-                  ...venueOptions.map((v) => ({ value: v.name, label: v.name })),
-                ]}
-              />
-              <SelectField
-                label="Business Profile"
-                value={filters.businessId}
-                onChange={(v) => onChange("businessId", v)}
-                options={[
-                  { value: "", label: "All Businesses" },
-                  ...businessOptions.map((b) => ({ value: b.id, label: b.name })),
-                ]}
-              />
+              <Field label="Venue">
+                <input className={inputClass} value={filters.venue} onChange={(e) => onChange("venue", e.target.value)} placeholder="Venue name" />
+              </Field>
+              <Field label="Business Profile">
+                <input className={inputClass} value={filters.businessId} onChange={(e) => onChange("businessId", e.target.value)} placeholder="Business name" />
+              </Field>
               <Field label="Event Date">
                 <input type="date" className={inputClass} value={filters.eventDate} onChange={(e) => onChange("eventDate", e.target.value)} />
               </Field>
@@ -137,15 +111,9 @@ export function FilterPanel({
               <Field label="Date To">
                 <input type="date" className={inputClass} value={filters.dateTo} onChange={(e) => onChange("dateTo", e.target.value)} />
               </Field>
-              <SelectField
-                label="Assigned Executive"
-                value={filters.assignedExecutive}
-                onChange={(v) => onChange("assignedExecutive", v)}
-                options={[
-                  { value: "", label: "All Executives" },
-                  ...executiveOptions.map((e) => ({ value: e, label: e })),
-                ]}
-              />
+              <Field label="Assigned Executive">
+                <input className={inputClass} value={filters.assignedExecutive} onChange={(e) => onChange("assignedExecutive", e.target.value)} placeholder="Executive name" />
+              </Field>
             </div>
 
             <div className="flex flex-wrap items-center justify-end gap-2 mt-4 pt-4 border-t border-[#F3F4F6]">

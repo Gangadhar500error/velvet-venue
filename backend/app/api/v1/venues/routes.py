@@ -29,6 +29,7 @@ from app.schemas.venue import (
     VenueDetailResponse,
     VenueListResponse,
     VenueMutationResponse,
+    VenueSearchResponse,
     VenueUpdateRequest,
 )
 from app.services.pricing_service import PricingService
@@ -74,6 +75,19 @@ async def list_venues(
         sort_dir=sort_dir,
         page=page,
         page_size=page_size,
+    )
+
+
+@router.get("/search", response_model=VenueSearchResponse)
+async def search_venues(
+    current_user: Annotated[User, Depends(require_permission(VENUE_VIEW.code))],
+    service: Annotated[VenueService, Depends(get_venue_service)],
+    q: str | None = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    limit: int = Query(default=20, ge=1, le=50),
+) -> VenueSearchResponse:
+    return await service.search_bookable_venues(
+        current_user, query=q, page=page, page_size=limit
     )
 
 

@@ -241,9 +241,17 @@ class AvailabilityService:
             return venue_slots[0]
         return next((s for s in venue_slots if s.slot_key == "full_day"), None)
 
-    async def reserve(self, actor: User | None, venue_id: uuid.UUID, payload: BookingHoldRequest) -> None:
+    async def reserve(
+        self,
+        actor: User | None,
+        venue_id: uuid.UUID,
+        payload: BookingHoldRequest,
+        *,
+        commit: bool = True,
+        skip_write_check: bool = False,
+    ) -> None:
         venue = await self._load_venue(venue_id)
-        if actor is not None:
+        if actor is not None and not skip_write_check:
             self._assert_write(actor, venue)
         self.rules.assert_venue_active(venue)
         pricing = venue.active_pricing()
@@ -323,7 +331,51 @@ class AvailabilityService:
                 notes=str(payload.booking_id),
             )
         self.generator._rollup_day(day)
-        await self.db.commit()
+        if commit:
+            await self.db.commit()
+
+    async def hold_food_slot(
+        self,
+        venue_id: uuid.UUID,
+        event_date: date,
+        food_slot_id: uuid.UUID,
+        payload: BookingHoldRequest,
+        *,
+        commit: bool = False,
+    ) -> None:
+        day = await self.days.get_day_for_update(venue_id, event_date)
+        if day is None:
+            raise HTTPException(
+                status_code=http_status.HTTP_404_NOT_FOUND,
+                detail="Availability not found for this date.",
+            )
+        food_slot = self._find_slot(
+            day.slots or [],
+            slot_id=None,
+            food_slot_id=food_slot_id,
+            slot_key=None,
+            kind="food",
+        )
+        if food_slot is None:
+            raise HTTPException(
+                status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Requested food slot is not available on this date.",
+            )
+        self.rules.assert_slot_bookable(food_slot)
+        old = food_slot.status
+        self._apply_hold(food_slot, payload)
+        await self.logs.add(
+            availability_id=day.id,
+            action="booked",
+            old_status=old,
+            new_status=food_slot.status,
+            performed_by=None,
+            slot_availability_id=food_slot.id,
+            notes=str(payload.booking_id),
+        )
+        self.generator._rollup_day(day)
+        if commit:
+            await self.db.commit()
 
     def _apply_hold(self, slot: VenueSlotAvailability, payload: BookingHoldRequest) -> None:
         slot.status = AvailabilityStatus.BOOKED.value
@@ -334,7 +386,9 @@ class AvailabilityService:
         slot.guests = payload.guests
         slot.blocked_reason = None
 
-    async def release(self, booking_id: uuid.UUID, actor: User | None = None) -> None:
+    async def release(
+        self, booking_id: uuid.UUID, actor: User | None = None, *, commit: bool = True
+    ) -> None:
         rows = await self.slots.list_for_booking(booking_id)
         if not rows:
             return
@@ -369,9 +423,12 @@ class AvailabilityService:
         for day in days.values():
             if day is not None:
                 self.generator._rollup_day(day)
-        await self.db.commit()
+        if commit:
+            await self.db.commit()
 
-    async def complete(self, booking_id: uuid.UUID, actor: User | None = None) -> None:
+    async def complete(
+        self, booking_id: uuid.UUID, actor: User | None = None, *, commit: bool = True
+    ) -> None:
         rows = await self.slots.list_for_booking(booking_id)
         if not rows:
             raise HTTPException(
@@ -395,4 +452,5 @@ class AvailabilityService:
         for day in days.values():
             if day is not None:
                 self.generator._rollup_day(day)
-        await self.db.commit()
+        if commit:
+            await self.db.commit()

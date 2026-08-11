@@ -1,7 +1,7 @@
 "use client";
 
 import type { ComponentType, ReactNode } from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   Building2,
@@ -19,7 +19,7 @@ import {
 import { Button } from "../../_components/ui/Button";
 import { SearchableSelect, type SearchableOption } from "../../_components/ui/SearchableSelect";
 import { Booking, BookingFormValues } from "../types";
-import { eventTypeOptions, formatCurrency, formatDate } from "../data";
+import { formatCurrency, formatDate } from "../data";
 import {
   availabilityLabel,
   buildVenueFormPatch,
@@ -52,12 +52,25 @@ import {
   getBookingInvoices,
   getLatestInvoiceNo,
 } from "../payments";
-import { useDemoStore } from "../../store/demoStore";
 import { EntityViewLayout } from "../../_components/layout/EntityViewLayout";
 import { notify } from "../../_components/ui/Toast";
 import { QuickCreateModal, QuickField, quickInputCls } from "./SmartSearchSelect";
-import { blankCustomer } from "../../customers/data";
 import type { Venue } from "../../venues/types";
+import {
+  createCustomer,
+  searchCustomers,
+  type CustomerSearchItem,
+} from "@/lib/customers";
+import {
+  fetchVenue,
+  fetchVenueMeta,
+  mapVenueDetail,
+  searchVenues,
+  type VenueSearchItem,
+} from "@/lib/venues";
+import { fetchAvailabilityWindow } from "@/lib/availability";
+import { quoteBooking, type BookingQuote } from "@/lib/bookings";
+import { formToBookingPayload } from "../apiMap";
 
 const sectionCls =
   "bg-white border border-[#E8EAF0] rounded-[14px] overflow-hidden";
@@ -96,11 +109,6 @@ export function BookingFormFlow({
   onSave,
   onSaveDraft,
 }: Props) {
-  const venues = useDemoStore((s) => s.venues);
-  const customers = useDemoStore((s) => s.customers);
-  const addCustomer = useDemoStore((s) => s.addCustomer);
-  const nextCustomerIds = useDemoStore((s) => s.nextCustomerIds);
-
   const [quickModal, setQuickModal] = useState(false);
   const [quickSaving, setQuickSaving] = useState(false);
   const [customerDraft, setCustomerDraft] = useState({
@@ -108,12 +116,35 @@ export function BookingFormFlow({
     phone: "",
     email: "",
     address: "",
+    city: "",
+    state: "",
+    country: "India",
   });
+  const [customerHits, setCustomerHits] = useState<CustomerSearchItem[]>([]);
+  const [customerSearching, setCustomerSearching] = useState(false);
+  const [selectedCustomer, setSelectedCustomer] = useState<CustomerSearchItem | null>(null);
+  const [venueHits, setVenueHits] = useState<VenueSearchItem[]>([]);
+  const [venueSearching, setVenueSearching] = useState(false);
+  const [liveVenue, setLiveVenue] = useState<Venue | undefined>(undefined);
+  const [venueLoading, setVenueLoading] = useState(false);
+  const [backendQuote, setBackendQuote] = useState<BookingQuote | null>(null);
+  const [catalogEventTypes, setCatalogEventTypes] = useState<string[]>([]);
 
-  const selectedVenue = useMemo<Venue | undefined>(
-    () => venues.find((v) => v.venueId === form.venueId || v.id === form.venueId),
-    [venues, form.venueId]
-  );
+  const selectedVenue = liveVenue;
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchVenueMeta()
+      .then((meta) => {
+        if (!cancelled) setCatalogEventTypes(meta.event_types || []);
+      })
+      .catch(() => {
+        if (!cancelled) setCatalogEventTypes([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const bookingTypeSupport = useMemo(
     () => getVenueBookingTypeSupport(selectedVenue),
@@ -146,10 +177,100 @@ export function BookingFormFlow({
   }, [
     editable,
     selectedVenue?.venueId,
+    selectedVenue?.id,
     form.bookingType,
     bookingTypeSupport.venueOnly,
     bookingTypeSupport.venueFood,
   ]);
+
+  useEffect(() => {
+    const venueId = form.venueId?.trim();
+    if (!venueId) {
+      setLiveVenue(undefined);
+      setBackendQuote(null);
+      return;
+    }
+    if (liveVenue && (liveVenue.id === venueId || liveVenue.venueId === venueId)) return;
+    let cancelled = false;
+    setVenueLoading(true);
+    (async () => {
+      try {
+        const detail = await fetchVenue(venueId);
+        const mapped = mapVenueDetail(detail);
+        const windowDays = mapped.maxAdvanceBookingDays || 180;
+        const availability = await fetchAvailabilityWindow(mapped.id, windowDays);
+        mapped.availability = availability.days;
+        if (!cancelled) setLiveVenue(mapped);
+      } catch (error) {
+        if (!cancelled) {
+          setLiveVenue(undefined);
+          notify.error(error instanceof Error ? error.message : "Unable to load venue.");
+        }
+      } finally {
+        if (!cancelled) setVenueLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.venueId]);
+
+  useEffect(() => {
+    if (!editable || !form.venueId || !form.eventDate) {
+      setBackendQuote(null);
+      return;
+    }
+    const timer = window.setTimeout(async () => {
+      try {
+        const quote = await quoteBooking(formToBookingPayload(form));
+        setBackendQuote(quote);
+      } catch {
+        setBackendQuote(null);
+      }
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [
+    editable,
+    form.venueId,
+    form.eventDate,
+    form.eventEndDate,
+    form.selectedDates,
+    form.bookingType,
+    form.pricingMethod,
+    form.slotKey,
+    form.foodSlotKeys,
+    form.mealGuestsJson,
+    form.guestCount,
+    form.vegGuestCount,
+    form.nonVegGuestCount,
+    form.addonsCsv,
+    form.discountAmount,
+  ]);
+
+  const searchCustomerDirectory = useCallback(async (query: string) => {
+    setCustomerSearching(true);
+    try {
+      const data = await searchCustomers(query, 1, 20);
+      setCustomerHits(data.items || []);
+    } catch {
+      setCustomerHits([]);
+    } finally {
+      setCustomerSearching(false);
+    }
+  }, []);
+
+  const searchVenueDirectory = useCallback(async (query: string) => {
+    setVenueSearching(true);
+    try {
+      const data = await searchVenues(query, 1, 20);
+      setVenueHits(data.items || []);
+    } catch {
+      setVenueHits([]);
+    } finally {
+      setVenueSearching(false);
+    }
+  }, []);
 
   const pricing = useMemo(
     () => calculateBookingPricing(selectedVenue, form),
@@ -278,6 +399,45 @@ export function BookingFormFlow({
       };
     }
 
+    if (editable) {
+      if (!backendQuote) {
+        return {
+          venueCharges: 0,
+          foodCharges: 0,
+          addonCharges: 0,
+          gstAmount: 0,
+          bookingAmount: 0,
+          minOnlineAmount: 0,
+          minOnlinePercent: 0,
+          platformCommission: 0,
+          platformCommissionPercent: 2,
+          vendorReceivable: 0,
+          customerPaysNow: 0,
+          remainingBalance: 0,
+          venuePricePerDay: 0,
+          dayCount: days,
+        };
+      }
+      const quoteDays = Math.max(1, days);
+      return {
+        venueCharges: backendQuote.venue_price,
+        foodCharges: backendQuote.food_cost,
+        addonCharges: backendQuote.services_total,
+        gstAmount: backendQuote.gst_amount,
+        bookingAmount: backendQuote.grand_total,
+        minOnlineAmount: backendQuote.advance,
+        minOnlinePercent: backendQuote.advance_percent,
+        platformCommission: backendQuote.commission,
+        platformCommissionPercent: 2,
+        vendorReceivable: backendQuote.vendor_amount,
+        customerPaysNow: backendQuote.advance,
+        remainingBalance: backendQuote.remaining,
+        venuePricePerDay:
+          quoteDays > 0 ? Math.round(backendQuote.venue_price / quoteDays) : backendQuote.venue_price,
+        dayCount: quoteDays,
+      };
+    }
+
     const customerPaysNow = pricing.customerPaysOnline;
     return {
       venueCharges,
@@ -302,6 +462,8 @@ export function BookingFormFlow({
     booking.taxAmount,
     form.bookingType,
     pricing,
+    backendQuote,
+    editable,
   ]);
 
   const financeSnapshot = useMemo(() => {
@@ -337,16 +499,16 @@ export function BookingFormFlow({
 
   useEffect(() => {
     if (!editable) return;
-    const signature = `${form.venueId}|${form.bookingType}|${form.foodSlotKeys}|${form.mealGuestsJson}|${form.selectedDates || ""}|${form.eventDate}|${pricing.bookingAmount}|${pricing.minOnlineAmount}|${availabilityStatus}`;
+    const bookingAmount = backendQuote?.grand_total ?? 0;
+    const advance = backendQuote?.advance ?? 0;
+    const gstAmount = backendQuote?.gst_amount ?? 0;
+    const signature = `${form.venueId}|${form.bookingType}|${form.foodSlotKeys}|${form.mealGuestsJson}|${form.selectedDates || ""}|${form.eventDate}|${bookingAmount}|${advance}|${availabilityStatus}`;
     if (lastSynced.current === signature) return;
     lastSynced.current = signature;
 
-    const bookingAmount = pricing.bookingAmount;
-    const advance = pricing.customerPaysOnline;
-
     const patch: Partial<BookingFormValues> = {
       bookingAmount: bookingAmount ? String(bookingAmount) : "",
-      taxAmount: pricing.gstAmount ? String(pricing.gstAmount) : "0",
+      taxAmount: gstAmount ? String(gstAmount) : "0",
       advancePaid: advance > 0 ? String(advance) : bookingAmount > 0 ? "0" : "",
       addonsCsv:
         form.addonsCsv ||
@@ -370,21 +532,18 @@ export function BookingFormFlow({
     form.mealGuestsJson,
     form.selectedDates,
     form.eventDate,
-    pricing.bookingAmount,
-    pricing.minOnlineAmount,
+    backendQuote,
     availabilityStatus,
     onPatch,
   ]);
 
-  // Sync owner + slot defaults once venue is known (availability prefill)
+  // Load venue, business, vendor, pricing, and booking mode from the selected venue.
   useEffect(() => {
     if (!editable || !selectedVenue) return;
-    const needsOwner = !form.vendorId && Boolean(selectedVenue.ownerId);
-    const needsSlotKey = !form.slotKey && Boolean(form.slot);
-    if (!needsOwner && !needsSlotKey) return;
     onPatch(
       buildVenueFormPatch(selectedVenue, {
         preserveSlot: { slotKey: form.slotKey, slotLabel: form.slot },
+        preferBookingType: form.bookingType,
       })
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -392,45 +551,86 @@ export function BookingFormFlow({
 
   const customerOptions = useMemo<SearchableOption[]>(
     () =>
-      customers.map((c) => ({
-        value: c.customerId,
-        label: c.name,
+      customerHits.map((c) => ({
+        value: c.id,
+        label: c.full_name,
         icon: UserRound,
         description: [c.phone, c.email].filter(Boolean),
-        meta: c.customerId,
-        keywords: `${c.customerId} ${c.phone} ${c.email} ${c.name}`,
+        meta: c.customer_code,
+        keywords: `${c.customer_code} ${c.phone} ${c.email} ${c.full_name}`,
       })),
-    [customers]
+    [customerHits]
   );
+
+  const selectedCustomerOption = useMemo<SearchableOption | null>(() => {
+    if (!form.customerId) return null;
+    const hit = customerHits.find((c) => c.id === form.customerId) || selectedCustomer;
+    if (!hit) {
+      return form.customerName
+        ? { value: form.customerId, label: form.customerName, icon: UserRound }
+        : null;
+    }
+    return {
+      value: hit.id,
+      label: hit.full_name,
+      icon: UserRound,
+      description: [hit.phone, hit.email].filter(Boolean),
+      meta: hit.customer_code,
+    };
+  }, [form.customerId, form.customerName, customerHits, selectedCustomer]);
 
   const venueOptions = useMemo<SearchableOption[]>(
     () =>
-      venues.map((v) => ({
-        value: v.venueId,
-        label: v.name,
+      venueHits.map((v) => ({
+        value: v.id,
+        label: v.venue_name,
         icon: Landmark,
-        description: [v.businessName || "", v.city || ""].filter(Boolean),
-        meta: v.venueId,
-        keywords: [
-          v.name,
-          v.venueId,
-          v.id,
-          v.businessName,
-          v.businessId,
-          v.city,
-          v.ownerName,
-          v.category,
-          v.venueType,
-        ]
+        description: [v.business_name || "", v.city || ""].filter(Boolean),
+        meta: v.venue_code,
+        keywords: [v.venue_name, v.venue_code, v.business_name, v.city, v.category]
           .filter(Boolean)
           .join(" "),
       })),
-    [venues]
+    [venueHits]
   );
 
+  const selectedVenueOption = useMemo<SearchableOption | null>(() => {
+    if (!form.venueId) return null;
+    const hit = venueHits.find((v) => v.id === form.venueId);
+    if (hit) {
+      return {
+        value: hit.id,
+        label: hit.venue_name,
+        icon: Landmark,
+        description: [hit.business_name || "", hit.city || ""].filter(Boolean),
+        meta: hit.venue_code,
+      };
+    }
+    if (liveVenue && (liveVenue.id === form.venueId || liveVenue.venueId === form.venueId)) {
+      return {
+        value: liveVenue.id,
+        label: liveVenue.name,
+        icon: Landmark,
+        description: [liveVenue.businessName || "", liveVenue.city || ""].filter(Boolean),
+        meta: liveVenue.venueId,
+      };
+    }
+    return form.venueName
+      ? { value: form.venueId, label: form.venueName, icon: Landmark }
+      : null;
+  }, [form.venueId, form.venueName, venueHits, liveVenue]);
+
   const eventOptions = useMemo(
-    () => eventTypeOptions.map((e) => ({ value: e, label: e, icon: CalendarDays })),
-    []
+    () =>
+      (selectedVenue?.eventCategories?.length
+        ? selectedVenue.eventCategories
+        : catalogEventTypes
+      ).map((e) => ({
+        value: e,
+        label: e,
+        icon: CalendarDays,
+      })),
+    [selectedVenue?.eventCategories, catalogEventTypes]
   );
 
   const venuePricingModel = useMemo(
@@ -547,9 +747,21 @@ export function BookingFormFlow({
     form.pricingMethod === "slot_based" ||
     venuePricingModel === "slot_based";
 
+  const applyCustomer = (c: CustomerSearchItem) => {
+    setSelectedCustomer(c);
+    onPatch({
+      customerId: c.id,
+      customerName: c.full_name,
+      customerPhone: c.phone,
+      customerEmail: c.email,
+      customerAddress: [c.address, c.city, c.state].filter(Boolean).join(", "),
+    });
+  };
+
   const selectCustomer = (value: string) => {
     if (!editable) return;
     if (!value) {
+      setSelectedCustomer(null);
       onPatch({
         customerId: "",
         customerName: "",
@@ -559,21 +771,18 @@ export function BookingFormFlow({
       });
       return;
     }
-    const c = customers.find((x) => x.customerId === value);
-    onPatch({
-      customerId: value,
-      customerName: c?.name || "",
-      customerPhone: c?.phone || "",
-      customerEmail: c?.email || "",
-      customerAddress: [c?.addressLine1, c?.addressLine2, c?.city, c?.state]
-        .filter(Boolean)
-        .join(", "),
-    });
+    const c = customerHits.find((x) => x.id === value) || selectedCustomer;
+    if (!c) {
+      onPatch({ customerId: value });
+      return;
+    }
+    applyCustomer(c);
   };
 
   const selectVenue = (value: string) => {
     if (!editable) return;
     if (!value) {
+      setLiveVenue(undefined);
       onPatch({
         venueId: "",
         venueName: "",
@@ -594,14 +803,7 @@ export function BookingFormFlow({
       });
       return;
     }
-    const v = venues.find((x) => x.venueId === value);
-    if (!v) return;
-    onPatch(
-      buildVenueFormPatch(v, {
-        preferBookingType: form.bookingType,
-        preserveSlot: { slotKey: form.slotKey, slotLabel: form.slot },
-      })
-    );
+    onPatch({ venueId: value });
   };
 
   const switchBookingType = (next: "venue_only" | "venue_food") => {
@@ -809,41 +1011,61 @@ export function BookingFormFlow({
 
   const saveQuickCustomer = async () => {
     if (!editable) return;
-    if (!customerDraft.name.trim() || !customerDraft.phone.trim()) {
-      notify.validation("Please fill in all required fields.");
+    if (!customerDraft.name.trim() || !customerDraft.phone.trim() || !customerDraft.email.trim()) {
+      notify.validation("Name, mobile, and email are required.");
       return;
     }
     setQuickSaving(true);
-    await new Promise((r) => setTimeout(r, 400));
-    const ids = nextCustomerIds();
-    const created = blankCustomer({
-      id: ids.id,
-      customerId: ids.customerId,
-      name: customerDraft.name.trim(),
-      phone: customerDraft.phone.trim(),
-      email: customerDraft.email.trim(),
-      addressLine1: customerDraft.address.trim(),
-      source: "admin",
-      status: "active",
-      initials: customerDraft.name
-        .split(" ")
-        .filter(Boolean)
-        .map((n) => n[0])
-        .join("")
-        .slice(0, 2)
-        .toUpperCase(),
-    });
-    addCustomer(created);
-    onPatch({
-      customerId: created.customerId,
-      customerName: created.name,
-      customerPhone: created.phone,
-      customerEmail: created.email,
-      customerAddress: created.addressLine1 || "",
-    });
-    setQuickSaving(false);
-    setQuickModal(false);
-    notify.created("Customer");
+    try {
+      const created = await createCustomer({
+        name: customerDraft.name.trim(),
+        first_name: customerDraft.name.trim().split(/\s+/)[0],
+        last_name: customerDraft.name.trim().split(/\s+/).slice(1).join(" "),
+        email: customerDraft.email.trim().toLowerCase(),
+        mobile: customerDraft.phone.trim(),
+        phone: customerDraft.phone.trim(),
+        address: customerDraft.address.trim() || null,
+        address_line1: customerDraft.address.trim() || null,
+        city: customerDraft.city.trim() || null,
+        state: customerDraft.state.trim() || null,
+        country: customerDraft.country.trim() || null,
+        registration_source: "admin",
+        status: "active",
+        return_existing: false,
+      });
+      const item: CustomerSearchItem = {
+        id: created.customer.id,
+        customer_code: created.customer.customer_code,
+        first_name: created.customer.first_name,
+        last_name: created.customer.last_name,
+        full_name: created.customer.full_name,
+        phone: created.customer.mobile,
+        email: created.customer.email,
+        address: created.customer.address_line1,
+        city: created.customer.city,
+        state: created.customer.state,
+        profile_photo: created.customer.profile_image,
+        is_verified: created.customer.email_verified,
+        is_active: created.customer.status === "active",
+      };
+      setCustomerHits((prev) => [item, ...prev.filter((row) => row.id !== item.id)]);
+      applyCustomer(item);
+      setQuickModal(false);
+      setCustomerDraft({
+        name: "",
+        phone: "",
+        email: "",
+        address: "",
+        city: "",
+        state: "",
+        country: "India",
+      });
+      notify.created("Customer");
+    } catch (error) {
+      notify.error(error instanceof Error ? error.message : "Unable to create customer.");
+    } finally {
+      setQuickSaving(false);
+    }
   };
 
   const dateReadOnly = !editable;
@@ -964,13 +1186,25 @@ export function BookingFormFlow({
                     variant="underline"
                     value={form.customerId}
                     options={customerOptions}
+                    selectedOption={selectedCustomerOption}
+                    loading={customerSearching}
+                    debounceMs={300}
                     placeholder="Select customer"
-                    searchPlaceholder="Search customer..."
+                    searchPlaceholder="Search name, phone, email, or code..."
                     createLabel="New Customer"
                     emptyLabel="No matching results found."
+                    onQueryChange={searchCustomerDirectory}
                     onChange={selectCustomer}
                     onCreate={() => {
-                      setCustomerDraft({ name: "", phone: "", email: "", address: "" });
+                      setCustomerDraft({
+                        name: "",
+                        phone: "",
+                        email: "",
+                        address: "",
+                        city: "",
+                        state: "",
+                        country: "India",
+                      });
                       setQuickModal(true);
                     }}
                   />
@@ -998,9 +1232,13 @@ export function BookingFormFlow({
                   variant="underline"
                   value={form.venueId}
                   options={venueOptions}
+                  selectedOption={selectedVenueOption}
+                  loading={venueSearching || venueLoading}
+                  debounceMs={300}
                   placeholder="Search venue by name, ID, business, or city"
-                  searchPlaceholder="Venue name, ID, business, city…"
+                  searchPlaceholder="Venue name, code, business, city…"
                   emptyLabel="No matching venues found."
+                  onQueryChange={searchVenueDirectory}
                   onChange={selectVenue}
                 />
               ) : (
@@ -1110,8 +1348,12 @@ export function BookingFormFlow({
                                 <div className="px-4 py-3">
                                   <div className="grid grid-cols-7 gap-1.5">
                                     {cells.map((cell) => {
+                                      const todayIso = toIsoDate(new Date());
                                       const status = getDateAvailability(cell.iso);
-                                      const disabled = status === "booked" || status === "blocked";
+                                      const disabled =
+                                        cell.iso < todayIso ||
+                                        status === "booked" ||
+                                        status === "blocked";
                                       const selected = selectedSet.has(cell.iso);
                                       const inPreview =
                                         previewMin != null &&
@@ -1954,9 +2196,10 @@ export function BookingFormFlow({
               onChange={(e) => setCustomerDraft((p) => ({ ...p, phone: e.target.value }))}
             />
           </QuickField>
-          <QuickField label="Email">
+          <QuickField label="Email" required>
             <input
               className={quickInputCls}
+              type="email"
               value={customerDraft.email}
               onChange={(e) => setCustomerDraft((p) => ({ ...p, email: e.target.value }))}
             />
@@ -1966,6 +2209,27 @@ export function BookingFormFlow({
               className={quickInputCls}
               value={customerDraft.address}
               onChange={(e) => setCustomerDraft((p) => ({ ...p, address: e.target.value }))}
+            />
+          </QuickField>
+          <QuickField label="City">
+            <input
+              className={quickInputCls}
+              value={customerDraft.city}
+              onChange={(e) => setCustomerDraft((p) => ({ ...p, city: e.target.value }))}
+            />
+          </QuickField>
+          <QuickField label="State">
+            <input
+              className={quickInputCls}
+              value={customerDraft.state}
+              onChange={(e) => setCustomerDraft((p) => ({ ...p, state: e.target.value }))}
+            />
+          </QuickField>
+          <QuickField label="Country">
+            <input
+              className={quickInputCls}
+              value={customerDraft.country}
+              onChange={(e) => setCustomerDraft((p) => ({ ...p, country: e.target.value }))}
             />
           </QuickField>
         </QuickCreateModal>
