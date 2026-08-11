@@ -13,12 +13,11 @@ import {
   recordPaymentMethodOptions,
 } from "../data";
 import {
-  applyRecordedPayment,
   getBookingInvoices,
   paymentMethodLabel,
   paymentTypeLabel,
 } from "../payments";
-import { useDemoStore } from "../../store/demoStore";
+import { fetchBooking, mapBookingDetail, recordBookingPayment } from "@/lib/bookings";
 import { EntityLink, entityHref } from "../../_components/relations/EntityLink";
 
 const sectionCls =
@@ -27,14 +26,15 @@ const sectionCls =
 interface Props {
   booking: Booking;
   allowRecordPayment?: boolean;
+  onUpdated?: (booking: Booking) => void;
 }
 
 export function BookingPaymentsPanel({
   booking,
   allowRecordPayment = true,
+  onUpdated,
 }: Props) {
   const router = useRouter();
-  const updateBooking = useDemoStore((s) => s.updateBooking);
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({
@@ -81,17 +81,21 @@ export function BookingPaymentsPanel({
     }
 
     setSaving(true);
-    await new Promise((r) => setTimeout(r, 350));
     try {
-      const next = applyRecordedPayment(booking, {
-        paymentDate: form.paymentDate,
+      const paidAt = form.paymentDate
+        ? new Date(`${form.paymentDate}T12:00:00`).toISOString()
+        : undefined;
+      await recordBookingPayment(booking.id, {
         amount,
-        method: form.method,
-        reference: form.reference,
-        notes: form.notes,
-        collectedBy: "Admin",
+        payment_method: form.method,
+        transaction_id: form.reference || undefined,
+        remarks: form.notes || undefined,
+        paid_at: paidAt,
+        payment_type:
+          amount >= remaining ? "final" : booking.paidAmount > 0 ? "installment" : "advance",
       });
-      updateBooking(booking.id, next);
+      const detail = await fetchBooking(booking.id);
+      onUpdated?.(mapBookingDetail(detail));
       notify.created("Payment");
       setOpen(false);
     } catch (err) {
@@ -195,6 +199,51 @@ export function BookingPaymentsPanel({
                 <tr>
                   <td colSpan={8} className="px-4 py-10 text-center text-[#6B7280]">
                     No invoices yet. Record a payment to generate the first invoice.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className={sectionCls}>
+        <div className="px-4 md:px-5 py-3 border-b border-[#E8EAF0] bg-[#FFF3EB]/40">
+          <h2 className="text-[13px] font-semibold uppercase tracking-wide text-[#111827]">
+            Payment History
+          </h2>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-[#FCFCFD] text-xs uppercase tracking-wide text-[#6B7280]">
+              <tr>
+                <th className="text-left px-4 py-2.5 font-semibold">Date</th>
+                <th className="text-right px-4 py-2.5 font-semibold">Amount</th>
+                <th className="text-left px-4 py-2.5 font-semibold">Method</th>
+                <th className="text-left px-4 py-2.5 font-semibold">Reference</th>
+                <th className="text-left px-4 py-2.5 font-semibold">Collected By</th>
+                <th className="text-left px-4 py-2.5 font-semibold">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(booking.transactions || []).map((txn) => (
+                <tr key={txn.id} className="border-t border-[#F3F4F6]">
+                  <td className="px-4 py-3">{formatDate(txn.date)}</td>
+                  <td className="px-4 py-3 text-right font-semibold tabular-nums">
+                    {formatCurrency(txn.amount)}
+                  </td>
+                  <td className="px-4 py-3 capitalize">
+                    {paymentMethodLabel(String(txn.method || ""))}
+                  </td>
+                  <td className="px-4 py-3">{txn.reference || txn.transactionId || "—"}</td>
+                  <td className="px-4 py-3">{txn.collectedBy || "—"}</td>
+                  <td className="px-4 py-3 capitalize">{txn.status}</td>
+                </tr>
+              ))}
+              {(booking.transactions || []).length === 0 && (
+                <tr>
+                  <td colSpan={6} className="px-4 py-8 text-center text-[#6B7280]">
+                    No payments recorded yet.
                   </td>
                 </tr>
               )}

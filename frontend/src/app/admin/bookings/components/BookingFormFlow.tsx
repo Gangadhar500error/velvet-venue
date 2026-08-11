@@ -19,14 +19,13 @@ import {
 import { Button } from "../../_components/ui/Button";
 import { SearchableSelect, type SearchableOption } from "../../_components/ui/SearchableSelect";
 import { Booking, BookingFormValues } from "../types";
-import { formatCurrency, formatDate } from "../data";
+import { formatCurrency, formatDate, paymentMethodOptions } from "../data";
 import {
   availabilityLabel,
   buildVenueFormPatch,
   calculateBookingPricing,
   findFoodSlot,
   findPricingSlot,
-  getAvailabilityStatus,
   getEnabledFoodSlots,
   getEnabledSlots,
   getVenueOnlySlotAvailability,
@@ -39,7 +38,9 @@ import {
   serializeMealGuests,
   formatSelectedMealsLabel,
   formatSelectedMealsSlotLabel,
+  getDaySlotAvailability,
   getFoodMealAvailability,
+  parseDateSlotsJson,
   resolveBookingDates,
   slotDisplayLabel,
   validateMealSelections,
@@ -94,6 +95,7 @@ interface Props {
   onCancel?: () => void;
   onSave?: () => void;
   onSaveDraft?: () => void;
+  onBookingUpdated?: (booking: Booking) => void;
 }
 
 export function BookingFormFlow({
@@ -108,6 +110,7 @@ export function BookingFormFlow({
   onCancel,
   onSave,
   onSaveDraft,
+  onBookingUpdated,
 }: Props) {
   const [quickModal, setQuickModal] = useState(false);
   const [quickSaving, setQuickSaving] = useState(false);
@@ -129,6 +132,11 @@ export function BookingFormFlow({
   const [venueLoading, setVenueLoading] = useState(false);
   const [backendQuote, setBackendQuote] = useState<BookingQuote | null>(null);
   const [catalogEventTypes, setCatalogEventTypes] = useState<string[]>([]);
+  const amountReceivedTouched = useRef(false);
+
+  useEffect(() => {
+    amountReceivedTouched.current = false;
+  }, [form.venueId, form.selectedDates, form.eventDate, form.slotKey, form.bookingType]);
 
   const selectedVenue = liveVenue;
 
@@ -246,6 +254,8 @@ export function BookingFormFlow({
     form.nonVegGuestCount,
     form.addonsCsv,
     form.discountAmount,
+    form.advancePaid,
+    form.dateSlotsJson,
   ]);
 
   const searchCustomerDirectory = useCallback(async (query: string) => {
@@ -281,25 +291,62 @@ export function BookingFormFlow({
   const dayCount = Math.max(1, bookingDates.length || pricing.dayCount || 1);
 
   const availabilityStatus: AvailabilityBadge = useMemo(() => {
-    const key = form.slotKey || "full_day";
     const dates = bookingDates.length > 0 ? bookingDates : form.eventDate ? [form.eventDate] : [];
-    if (form.bookingType === "venue_only" && dates.length > 0) {
-      return getVenueOnlySlotAvailability(selectedVenue, dates, key, {
-        excludeBookingId: booking.bookingId,
-        excludeBookingRef: isCreate ? undefined : booking.id !== "new" ? booking.id : booking.bookingId,
-      });
-    }
-    if (bookingDates.length === 0) {
-      return getAvailabilityStatus(selectedVenue, form.eventDate, key);
+    if (dates.length === 0) return "unknown";
+    const exclude = {
+      excludeBookingId: booking.bookingId,
+      excludeBookingRef: isCreate ? undefined : booking.id !== "new" ? booking.id : booking.bookingId,
+    };
+    const perDate = parseDateSlotsJson(form.dateSlotsJson);
+    const selectedKeys = parseSelectedSlotKeys(form.slotKey, form.slot).filter((k) => k !== "full_day");
+    if (form.bookingType === "venue_only" && form.pricingMethod === "slot_based") {
+      let worst: AvailabilityBadge = "available";
+      for (const date of dates) {
+        const keys = perDate[date]?.length ? perDate[date] : selectedKeys;
+        if (keys.length === 0) {
+          const day = getDaySlotAvailability(selectedVenue, date, {
+            bookingType: "venue_only",
+            pricingMethod: "slot_based",
+            ...exclude,
+          });
+          if (day === "booked") return "booked";
+          if (day === "blocked") worst = "blocked";
+          if (day === "partial" && worst === "available") worst = "partial";
+          continue;
+        }
+        for (const key of keys) {
+          const status = getVenueOnlySlotAvailability(selectedVenue, [date], key, exclude);
+          if (status === "booked") return "booked";
+          if (status === "blocked") worst = "blocked";
+        }
+      }
+      return worst;
     }
     let worst: AvailabilityBadge = "available";
-    for (const date of bookingDates) {
-      const status = getAvailabilityStatus(selectedVenue, date, key);
+    for (const date of dates) {
+      const status = getDaySlotAvailability(selectedVenue, date, {
+        bookingType: form.bookingType,
+        pricingMethod: form.pricingMethod,
+        ...exclude,
+      });
       if (status === "booked") return "booked";
       if (status === "blocked") worst = "blocked";
+      if (status === "partial" && worst === "available") worst = "partial";
     }
     return worst;
-  }, [selectedVenue, form.eventDate, form.slotKey, bookingDates, form.bookingType, booking.bookingId, booking.id, isCreate]);
+  }, [
+    selectedVenue,
+    form.eventDate,
+    form.slotKey,
+    form.slot,
+    form.dateSlotsJson,
+    form.pricingMethod,
+    bookingDates,
+    form.bookingType,
+    booking.bookingId,
+    booking.id,
+    isCreate,
+  ]);
 
   const removeBookingDate = (date: string) => {
     const next = bookingDates.filter((d) => d !== date);
@@ -333,6 +380,7 @@ export function BookingFormFlow({
 
   const isUnavailable =
     availabilityStatus === "booked" || availabilityStatus === "blocked";
+  // Partial days remain bookable for remaining slots.
 
   const venueSlotSelectionInvalid =
     form.bookingType === "venue_only" &&
@@ -371,9 +419,9 @@ export function BookingFormFlow({
       const amount = booking.bookingAmount;
       const paysNow =
         Number(booking.advancePaid) || minOnlineAmount;
-      const commission = Math.round(
-        (paysNow * (platformCommissionPercent || 2)) / 100
-      );
+      const commission =
+        booking.platformCommission ??
+        Math.round((paysNow * (platformCommissionPercent || 0)) / 100);
       const resolvedFood =
         form.bookingType === "venue_food" && foodCharges > 0 ? foodCharges : 0;
       const resolvedVenue =
@@ -390,10 +438,11 @@ export function BookingFormFlow({
         minOnlineAmount,
         minOnlinePercent,
         platformCommission: commission,
-        platformCommissionPercent,
-        vendorReceivable: Math.max(0, paysNow - commission),
-        customerPaysNow: paysNow,
-        remainingBalance: Math.max(0, amount - paysNow),
+        platformCommissionPercent:
+          booking.platformCommissionPercent ?? platformCommissionPercent,
+        vendorReceivable: booking.vendorReceivable ?? Math.max(0, paysNow - commission),
+        customerPaysNow: booking.paidAmount || paysNow,
+        remainingBalance: booking.pendingAmount ?? Math.max(0, amount - paysNow),
         venuePricePerDay: days > 0 ? Math.round(resolvedVenue / days) : resolvedVenue,
         dayCount: days,
       };
@@ -410,7 +459,7 @@ export function BookingFormFlow({
           minOnlineAmount: 0,
           minOnlinePercent: 0,
           platformCommission: 0,
-          platformCommissionPercent: 2,
+          platformCommissionPercent: 0,
           vendorReceivable: 0,
           customerPaysNow: 0,
           remainingBalance: 0,
@@ -428,9 +477,10 @@ export function BookingFormFlow({
         minOnlineAmount: backendQuote.advance,
         minOnlinePercent: backendQuote.advance_percent,
         platformCommission: backendQuote.commission,
-        platformCommissionPercent: 2,
+        platformCommissionPercent: backendQuote.platform_commission_percent ?? 0,
         vendorReceivable: backendQuote.vendor_amount,
-        customerPaysNow: backendQuote.advance,
+        customerPaysNow:
+          backendQuote.amount_received ?? backendQuote.advance,
         remainingBalance: backendQuote.remaining,
         venuePricePerDay:
           quoteDays > 0 ? Math.round(backendQuote.venue_price / quoteDays) : backendQuote.venue_price,
@@ -506,23 +556,29 @@ export function BookingFormFlow({
     if (lastSynced.current === signature) return;
     lastSynced.current = signature;
 
+    const suggested = advance > 0 ? String(advance) : bookingAmount > 0 ? "0" : "";
+    const received = amountReceivedTouched.current
+      ? Number(form.advancePaid) || 0
+      : advance;
     const patch: Partial<BookingFormValues> = {
       bookingAmount: bookingAmount ? String(bookingAmount) : "",
       taxAmount: gstAmount ? String(gstAmount) : "0",
-      advancePaid: advance > 0 ? String(advance) : bookingAmount > 0 ? "0" : "",
       addonsCsv:
         form.addonsCsv ||
         pricing.selectedAddons.map((a) => a.id).join(","),
       availabilityLabel: availabilityLabel(availabilityStatus),
     };
+    if (!amountReceivedTouched.current) {
+      patch.advancePaid = suggested;
+    }
 
     if (bookingAmount > 0) {
+      const paid = received;
       patch.paymentStatus =
-        advance <= 0 ? "unpaid" : advance >= bookingAmount ? "paid" : "partial";
+        paid <= 0 ? "unpaid" : paid >= bookingAmount ? "paid" : "partial";
     }
 
     onPatch(patch);
-    // Advance is always calculated from venue advance % — no manual override
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     editable,
@@ -676,41 +732,9 @@ export function BookingFormFlow({
 
   const getDateAvailability = (date: string): AvailabilityBadge => {
     if (!selectedVenue) return "unknown";
-    if (form.bookingType === "venue_food") {
-      const keys =
-        selectedFoodKeys.length > 0
-          ? selectedFoodKeys
-          : foodMealSlots.map((s) => s.key);
-      let worst: AvailabilityBadge = "available";
-      for (const key of keys) {
-        const status = getFoodMealAvailability(selectedVenue, [date], key, {
-          excludeBookingId: booking.bookingId,
-          excludeBookingRef,
-        });
-        if (status === "booked") return "booked";
-        if (status === "blocked") worst = "blocked";
-      }
-      return worst;
-    }
-    if (form.bookingType === "venue_only" && form.pricingMethod === "slot_based") {
-      const keys =
-        selectedVenueSlotKeys.length > 0
-          ? selectedVenueSlotKeys
-          : venueTimedSlots.map((s) => s.key);
-      let worst: AvailabilityBadge = "available";
-      for (const key of keys) {
-        const status = getVenueOnlySlotAvailability(selectedVenue, [date], key, {
-          excludeBookingId: booking.bookingId,
-          excludeBookingRef,
-        });
-        if (status === "booked") return "booked";
-        if (status === "blocked") worst = "blocked";
-      }
-      return worst;
-    }
-    const slotKey =
-      form.pricingMethod === "full_day" ? "full_day" : form.slotKey || "full_day";
-    return getVenueOnlySlotAvailability(selectedVenue, [date], slotKey, {
+    return getDaySlotAvailability(selectedVenue, date, {
+      bookingType: form.bookingType,
+      pricingMethod: form.pricingMethod,
       excludeBookingId: booking.bookingId,
       excludeBookingRef,
     });
@@ -722,17 +746,6 @@ export function BookingFormFlow({
 
   const dateScope =
     bookingDates.length > 0 ? bookingDates : form.eventDate ? [form.eventDate] : [];
-  const venueTimedSlotAvailability = useMemo(() => {
-    const map: Record<string, AvailabilityBadge> = {};
-    if (!selectedVenue || dateScope.length === 0) return map;
-    for (const slot of venueTimedSlots) {
-      map[slot.key] = getVenueOnlySlotAvailability(selectedVenue, dateScope, slot.key, {
-        excludeBookingId: booking.bookingId,
-        excludeBookingRef,
-      });
-    }
-    return map;
-  }, [selectedVenue, dateScope, venueTimedSlots, booking.bookingId, excludeBookingRef]);
 
   const fullDayAvailability = useMemo(() => {
     if (!selectedVenue || dateScope.length === 0) return "unknown" as AvailabilityBadge;
@@ -917,19 +930,12 @@ export function BookingFormFlow({
     });
   };
 
-  const toggleVenueOnlySlot = (slotKey: string) => {
-    if (!editable || !selectedVenue || form.bookingType !== "venue_only") return;
-    const availability = venueTimedSlotAvailability[slotKey];
-    if (availability === "booked" || availability === "blocked") return;
-
-    const current = parseSelectedSlotKeys(form.slotKey, form.slot).filter((k) => k !== "full_day");
-    const next = current.includes(slotKey)
-      ? current.filter((k) => k !== slotKey)
-      : [...current, slotKey];
-    const sortedNext = venueTimedSlots
+  const applyVenueSlotSelection = (nextByDate: Record<string, string[]>) => {
+    if (!selectedVenue) return;
+    const union = venueTimedSlots
       .map((s) => s.key)
-      .filter((k) => next.includes(k));
-    const selectedSlots = sortedNext
+      .filter((k) => Object.values(nextByDate).some((keys) => keys.includes(k)));
+    const selectedSlots = union
       .map((k) => findPricingSlot(selectedVenue, k))
       .filter((s): s is NonNullable<typeof s> => Boolean(s));
     const firstTimes = selectedSlots[0] ? parseTimeRange(selectedSlots[0].timeLabel) : { start: "", end: "" };
@@ -938,14 +944,38 @@ export function BookingFormFlow({
       : { start: "", end: "" };
     onPatch({
       pricingMethod: "slot_based",
-      slotKey: sortedNext.join(","),
+      slotKey: union.join(","),
       slot: selectedSlots.map((s) => s.name).join(", "),
+      dateSlotsJson: JSON.stringify(nextByDate),
       startTime: firstTimes.start || "",
       endTime: lastTimes.end || "",
       bookingAmount: "",
-      advancePaid: "",
       taxAmount: "",
     });
+  };
+
+  const toggleVenueOnlySlot = (slotKey: string, date?: string) => {
+    if (!editable || !selectedVenue || form.bookingType !== "venue_only") return;
+    const targetDate = date || bookingDates[0] || form.eventDate;
+    if (!targetDate) return;
+    const status = getVenueOnlySlotAvailability(selectedVenue, [targetDate], slotKey, {
+      excludeBookingId: booking.bookingId,
+      excludeBookingRef,
+    });
+    if (status === "booked" || status === "blocked") return;
+
+    const currentMap = parseDateSlotsJson(form.dateSlotsJson);
+    const fallback = parseSelectedSlotKeys(form.slotKey, form.slot).filter((k) => k !== "full_day");
+    const dates = bookingDates.length ? bookingDates : [targetDate];
+    const nextByDate: Record<string, string[]> = {};
+    for (const d of dates) {
+      nextByDate[d] = currentMap[d]?.length ? [...currentMap[d]] : [...fallback];
+    }
+    const current = nextByDate[targetDate] || [];
+    nextByDate[targetDate] = current.includes(slotKey)
+      ? current.filter((k) => k !== slotKey)
+      : [...current, slotKey];
+    applyVenueSlotSelection(nextByDate);
   };
 
   const syncMealFormFields = (
@@ -1354,6 +1384,7 @@ export function BookingFormFlow({
                                         cell.iso < todayIso ||
                                         status === "booked" ||
                                         status === "blocked";
+                                      // partial days stay selectable for remaining slots
                                       const selected = selectedSet.has(cell.iso);
                                       const inPreview =
                                         previewMin != null &&
@@ -1375,7 +1406,8 @@ export function BookingFormFlow({
                                           }}
                                           onClick={() => {
                                             const dayStatus = getDateAvailability(cell.iso);
-                                            const dayDisabled = dayStatus === "booked" || dayStatus === "blocked";
+                                            const dayDisabled =
+                                              dayStatus === "booked" || dayStatus === "blocked";
                                             if (dayDisabled) return;
 
                                             if (!rangeStartIso) {
@@ -1401,6 +1433,7 @@ export function BookingFormFlow({
                                             const includesUnavailable = range.some((iso) => {
                                               const s = getDateAvailability(iso);
                                               return s === "booked" || s === "blocked";
+                                              // partial included in range is allowed
                                             });
 
                                             if (includesUnavailable) {
@@ -1421,6 +1454,8 @@ export function BookingFormFlow({
                                               ? "border-[#C89B3C] bg-[#FFF3EB] text-[#B8862B]"
                                               : status === "available"
                                                 ? "border-[#D3F8E1] bg-[#ECFDF3] text-[#16A34A]"
+                                                : status === "partial"
+                                                  ? "border-[#FDE68A] bg-[#FFFBEB] text-[#D97706]"
                                                 : status === "booked"
                                                   ? "border-[#FECACA] bg-[#FEF2F2] text-[#DC2626]"
                                                   : status === "blocked"
@@ -1446,8 +1481,12 @@ export function BookingFormFlow({
                                       Available
                                     </div>
                                     <div className="inline-flex items-center gap-2">
+                                      <span className="w-3.5 h-3.5 rounded border border-[#FDE68A] bg-[#FFFBEB]" />
+                                      Partial
+                                    </div>
+                                    <div className="inline-flex items-center gap-2">
                                       <XCircle className="w-4 h-4 text-[#DC2626]" aria-hidden />
-                                      Booked
+                                      Fully Booked
                                     </div>
                                     <div className="inline-flex items-center gap-2">
                                       <AlertTriangle className="w-4 h-4 text-[#B8862B]" aria-hidden />
@@ -1626,46 +1665,50 @@ export function BookingFormFlow({
                   </div>
 
                   {form.bookingType === "venue_only" && usingSlot && venueTimedSlots.length > 0 && (
-                    <div className="space-y-2">
-                      <p className="text-[12px] font-medium text-[#6B7280] mb-1.5">
-                        Available Slots
-                      </p>
-                      <div className="flex flex-wrap gap-2">
-                        {venueTimedSlots.map((slot) => {
-                          const status = venueTimedSlotAvailability[slot.key] || "unknown";
-                          const unavailable = status === "booked" || status === "blocked";
-                          const isActive = selectedVenueSlotKeys.includes(slot.key);
+                    <div className="space-y-3">
+                      {(bookingDates.length > 0 ? bookingDates : form.eventDate ? [form.eventDate] : []).map(
+                        (date) => {
+                          const perDate = parseDateSlotsJson(form.dateSlotsJson);
+                          const selectedForDate =
+                            perDate[date]?.length
+                              ? perDate[date]
+                              : bookingDates.length <= 1
+                                ? selectedVenueSlotKeys
+                                : [];
                           return (
-                            <MealSlotChip
-                              key={slot.id}
-                              active={isActive}
-                              status={status}
-                              label={`${slot.name} · ${slot.timeLabel} · ${formatCurrency(slot.price)}`}
-                              onClick={() => toggleVenueOnlySlot(slot.key)}
-                              disabled={!editable || unavailable}
-                            />
+                            <div key={date} className="space-y-2">
+                              <p className="text-[12px] font-medium text-[#6B7280]">
+                                {formatDate(date)} · remaining slots
+                              </p>
+                              <div className="flex flex-wrap gap-2">
+                                {venueTimedSlots.map((slot) => {
+                                  const status = getVenueOnlySlotAvailability(
+                                    selectedVenue,
+                                    [date],
+                                    slot.key,
+                                    {
+                                      excludeBookingId: booking.bookingId,
+                                      excludeBookingRef,
+                                    }
+                                  );
+                                  const unavailable =
+                                    status === "booked" || status === "blocked";
+                                  const isActive = selectedForDate.includes(slot.key);
+                                  return (
+                                    <MealSlotChip
+                                      key={`${date}-${slot.id}`}
+                                      active={isActive}
+                                      status={status}
+                                      label={`${slot.name} · ${slot.timeLabel} · ${formatCurrency(slot.price)}`}
+                                      onClick={() => toggleVenueOnlySlot(slot.key, date)}
+                                      disabled={!editable || unavailable}
+                                    />
+                                  );
+                                })}
+                              </div>
+                            </div>
                           );
-                        })}
-                      </div>
-                      {selectedVenueSlotKeys.length > 0 && (
-                        <div className="space-y-1.5">
-                          <p className="text-[11px] font-medium uppercase tracking-wide text-[#9CA3AF]">
-                            Selected Slots
-                          </p>
-                          <div className="flex flex-wrap gap-1.5">
-                            {selectedVenueSlotKeys.map((key) => {
-                              const slot = findPricingSlot(selectedVenue, key);
-                              return (
-                                <span
-                                  key={key}
-                                  className="inline-flex items-center rounded-full bg-[#F3F4F6] px-2.5 py-0.5 text-[12px] font-medium text-[#374151]"
-                                >
-                                  {slot?.name || key}
-                                </span>
-                              );
-                            })}
-                          </div>
-                        </div>
+                        }
                       )}
                     </div>
                   )}
@@ -1867,19 +1910,31 @@ export function BookingFormFlow({
                       value={formatCurrency(meal.mealTotal)}
                     />
                   ))}
-                  <PayRow
-                    label="Food Total"
-                    value={formatCurrency(displayAmounts.foodCharges)}
-                    bold
-                  />
                 </>
               )}
+              <PayRow
+                label="Food Charges"
+                value={formatCurrency(displayAmounts.foodCharges)}
+              />
+              <PayRow
+                label="Additional Services"
+                value={formatCurrency(displayAmounts.addonCharges)}
+              />
+              <PayRow
+                label="Subtotal"
+                value={formatCurrency(
+                  backendQuote?.subtotal ??
+                    displayAmounts.venueCharges +
+                      displayAmounts.foodCharges +
+                      displayAmounts.addonCharges
+                )}
+              />
               {displayAmounts.gstAmount > 0 && (
                 <PayRow
                   label={
-                    pricing.gstMode === "included"
-                      ? `GST (${pricing.gstPercent}% included)`
-                      : `GST (${pricing.gstPercent}%)`
+                    (backendQuote?.gst_mode || pricing.gstMode) === "included"
+                      ? `GST (${backendQuote?.gst_percent || pricing.gstPercent}% included)`
+                      : `GST (${backendQuote?.gst_percent || pricing.gstPercent}%)`
                   }
                   value={formatCurrency(displayAmounts.gstAmount)}
                 />
@@ -1893,16 +1948,38 @@ export function BookingFormFlow({
                 bold
               />
               <PayRow
-                label={`Advance (${displayAmounts.minOnlinePercent || 0}%)`}
-                value={formatCurrency(displayAmounts.customerPaysNow)}
-                bold
+                label={`Suggested Advance (${displayAmounts.minOnlinePercent || 0}%)`}
+                value={formatCurrency(displayAmounts.minOnlineAmount)}
               />
+              {editable ? (
+                <div className="flex items-center justify-between gap-4 py-2.5">
+                  <p className="text-sm font-bold text-[#111827]">Amount Received</p>
+                  <input
+                    type="number"
+                    min={0}
+                    max={displayAmounts.bookingAmount || undefined}
+                    className="w-36 h-9 px-2 text-right text-sm font-semibold tabular-nums border-b border-[#E5E7EB] outline-none focus:border-[#C89B3C]"
+                    value={form.advancePaid}
+                    onChange={(e) => {
+                      amountReceivedTouched.current = true;
+                      onChange("advancePaid", e.target.value);
+                    }}
+                    placeholder={String(displayAmounts.minOnlineAmount || 0)}
+                  />
+                </div>
+              ) : (
+                <PayRow
+                  label="Amount Received"
+                  value={formatCurrency(displayAmounts.customerPaysNow)}
+                  bold
+                />
+              )}
               <PayRow
                 label={`Platform Commission (${displayAmounts.platformCommissionPercent}%)`}
                 value={formatCurrency(displayAmounts.platformCommission)}
               />
               <p className="text-[11px] text-[#9CA3AF] pb-1 text-right">
-                Commission is non-refundable and calculated on the advance only.
+                Commission is calculated on the amount received.
               </p>
               <PayRow
                 label="Vendor Receivable"
@@ -1913,10 +1990,95 @@ export function BookingFormFlow({
                 value={formatCurrency(displayAmounts.remainingBalance)}
                 bold
               />
+              {editable ? (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
+                  <label className="space-y-1">
+                    <span className="text-[11px] font-medium uppercase tracking-wide text-[#9CA3AF]">
+                      Payment Status
+                    </span>
+                    <select
+                      className={inputCls}
+                      value={form.paymentStatus}
+                      onChange={(e) =>
+                        onChange("paymentStatus", e.target.value as BookingFormValues["paymentStatus"])
+                      }
+                    >
+                      <option value="unpaid">Pending</option>
+                      <option value="partial">Partially Paid</option>
+                      <option value="paid">Paid</option>
+                      <option value="refunded">Refunded</option>
+                      <option value="failed">Failed</option>
+                      <option value="cancelled">Cancelled</option>
+                    </select>
+                  </label>
+                  <label className="space-y-1">
+                    <span className="text-[11px] font-medium uppercase tracking-wide text-[#9CA3AF]">
+                      Payment Method
+                    </span>
+                    <select
+                      className={inputCls}
+                      value={form.paymentMethod}
+                      onChange={(e) =>
+                        onChange("paymentMethod", e.target.value as BookingFormValues["paymentMethod"])
+                      }
+                    >
+                      <option value="">Select method</option>
+                      {paymentMethodOptions.map((opt) => (
+                        <option key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+              ) : null}
               <p className="text-[11px] text-[#9CA3AF] pt-1">
-                Customer pays only the advance online. Remaining balance is paid
-                directly to the vendor.
+                Remaining balance is paid directly to the vendor.
               </p>
+              <div className="pt-3">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-[#9CA3AF] mb-2">
+                  Payment History
+                </p>
+                <div className="overflow-x-auto rounded-[10px] border border-[#E8EAF0]">
+                  <table className="w-full text-[12px]">
+                    <thead className="bg-[#F8F9FB] text-[#9CA3AF] uppercase tracking-wide">
+                      <tr>
+                        {["Date", "Amount", "Method", "Reference", "Collected By", "Status"].map((h) => (
+                          <th key={h} className="text-left px-3 py-2 font-semibold">
+                            {h}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(booking.transactions || []).length === 0 ? (
+                        <tr>
+                          <td colSpan={6} className="px-3 py-4 text-[#9CA3AF]">
+                            {isCreate
+                              ? "The amount received will be recorded when the booking is created."
+                              : "No payments recorded yet."}
+                          </td>
+                        </tr>
+                      ) : (
+                        (booking.transactions || []).map((txn) => (
+                          <tr key={txn.id} className="border-t border-[#E8EAF0]">
+                            <td className="px-3 py-2 whitespace-nowrap">
+                              {formatDate(txn.date)}
+                            </td>
+                            <td className="px-3 py-2 tabular-nums font-semibold">
+                              {formatCurrency(txn.amount)}
+                            </td>
+                            <td className="px-3 py-2 capitalize">{String(txn.method || "—")}</td>
+                            <td className="px-3 py-2">{txn.reference || txn.transactionId || "—"}</td>
+                            <td className="px-3 py-2">{txn.collectedBy || "—"}</td>
+                            <td className="px-3 py-2 capitalize">{txn.status}</td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
             </div>
           </Section>
 
@@ -2123,13 +2285,21 @@ export function BookingFormFlow({
                 {isPersistedBooking ? (
                   <>
                     <SummaryRow
-                      label="Total Amount Paid"
+                      label="Amount Paid"
                       value={formatCurrency(financeSnapshot.totalPaid)}
                     />
                     <SummaryRow
                       label="Remaining Balance"
                       value={formatCurrency(financeSnapshot.remaining)}
                       strong
+                    />
+                    <SummaryRow
+                      label="Platform Commission"
+                      value={formatCurrency(booking.platformCommission || displayAmounts.platformCommission)}
+                    />
+                    <SummaryRow
+                      label="Vendor Receivable"
+                      value={formatCurrency(booking.vendorReceivable || displayAmounts.vendorReceivable || 0)}
                     />
                     <SummaryRow
                       label="Latest Invoice No"
@@ -2149,8 +2319,16 @@ export function BookingFormFlow({
                 ) : (
                   <>
                     <SummaryRow
-                      label="Advance"
+                      label="Amount Received"
                       value={formatCurrency(displayAmounts.customerPaysNow)}
+                    />
+                    <SummaryRow
+                      label="Platform Commission"
+                      value={formatCurrency(displayAmounts.platformCommission)}
+                    />
+                    <SummaryRow
+                      label="Vendor Receivable"
+                      value={formatCurrency(displayAmounts.vendorReceivable || 0)}
                     />
                     <SummaryRow
                       label="Remaining Balance"
@@ -2168,6 +2346,7 @@ export function BookingFormFlow({
             <BookingPaymentsPanel
               booking={booking}
               allowRecordPayment={mode === "view" || mode === "edit"}
+              onUpdated={onBookingUpdated}
             />
           ) : undefined
         }
@@ -2626,6 +2805,14 @@ function PayRow({
 }
 
 function InlineAvailability({ status }: { status: AvailabilityBadge }) {
+  if (status === "partial") {
+    return (
+      <span className="inline-flex items-center gap-1 text-[10px] font-medium text-[#D97706]">
+        <span className="w-1.5 h-1.5 rounded-full bg-[#D97706]" />
+        Partial
+      </span>
+    );
+  }
   if (status === "available") {
     return (
       <span className="inline-flex items-center gap-1 text-[10px] font-medium text-[#16A34A]">
@@ -2658,6 +2845,13 @@ function AvailabilityBadgePill({ status }: { status: AvailabilityBadge }) {
     return (
       <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[12px] font-semibold border bg-[#FCFCFD] text-[#94A3B8] border-[#E8EAF0]">
         Select date & slot
+      </span>
+    );
+  }
+  if (status === "partial") {
+    return (
+      <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[12px] font-semibold border bg-[#FFFBEB] text-[#D97706] border-[#FDE68A]">
+        Partially Booked
       </span>
     );
   }

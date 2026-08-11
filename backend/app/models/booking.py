@@ -48,6 +48,7 @@ class PaymentStatus(str, enum.Enum):
     PAID = "paid"
     REFUNDED = "refunded"
     FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
 class ApprovalStatus(str, enum.Enum):
@@ -90,6 +91,12 @@ ACTIVE_BOOKING_STATUSES = (
     BookingStatus.PENDING.value,
     BookingStatus.CONFIRMED.value,
     BookingStatus.CHECKED_IN.value,
+)
+
+INACTIVE_BOOKING_STATUSES = (
+    BookingStatus.CANCELLED.value,
+    BookingStatus.REJECTED.value,
+    BookingStatus.REFUNDED.value,
 )
 
 

@@ -1,5 +1,30 @@
 import { apiRequest } from "@/lib/api";
-import type { AvailabilityDay, DayAvailabilityStatus } from "@/app/admin/venues/types";
+import type {
+  AvailabilityDay,
+  AvailabilityDayBooking,
+  DayAvailabilityStatus,
+} from "@/app/admin/venues/types";
+
+const DAY_STATUSES: DayAvailabilityStatus[] = [
+  "available",
+  "booked",
+  "partially_booked",
+  "blocked",
+  "holiday",
+  "closed",
+  "maintenance",
+  "completed",
+  "cancelled",
+  "no_booking",
+  "expired",
+];
+
+export const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+export function isBookingUuid(value?: string | null): value is string {
+  return Boolean(value && UUID_RE.test(value));
+}
 
 export interface AvailabilitySlotApi {
   id: string;
@@ -18,6 +43,19 @@ export interface AvailabilitySlotApi {
   blocked_reason?: string | null;
 }
 
+export interface AvailabilityDayBookingApi {
+  booking_id: string;
+  booking_number: string;
+  customer_name?: string;
+  guest_count?: number;
+  selected_slots?: string[];
+  selected_food_slots?: string[];
+  payment_status?: string;
+  booking_status: string;
+  event_type?: string | null;
+  total_amount?: number;
+}
+
 export interface AvailabilityDayApi {
   id: string;
   date: string;
@@ -32,6 +70,13 @@ export interface AvailabilityDayApi {
   blocked: boolean;
   notes?: string | null;
   slots: AvailabilitySlotApi[];
+  booking_ids?: string[];
+  booked_slot_names?: string[];
+  available_slot_names?: string[];
+  booked_food_slots?: string[];
+  available_food_slots?: string[];
+  guest_count?: number;
+  bookings?: AvailabilityDayBookingApi[];
 }
 
 export interface AvailabilityDashboardApi {
@@ -65,44 +110,68 @@ export interface AvailabilityDayDetailApi {
   day: AvailabilityDayApi;
   occupancy: number;
   vendor_notes?: string | null;
+  bookings?: AvailabilityDayBookingApi[];
 }
 
 function mapStatus(status: string): DayAvailabilityStatus {
-  if (status === "maintenance") return "maintenance";
-  if (status === "holiday") return "holiday";
-  if (status === "blocked") return "blocked";
-  if (
-    status === "booked" ||
-    status === "partially_booked" ||
-    status === "completed"
-  ) {
-    return "booked";
+  if ((DAY_STATUSES as string[]).includes(status)) {
+    return status as DayAvailabilityStatus;
   }
   return "available";
+}
+
+function mapDayBookings(day: AvailabilityDayApi): AvailabilityDayBooking[] {
+  return (day.bookings || []).map((booking) => ({
+    id: booking.booking_id,
+    bookingId: booking.booking_number,
+    customerName: booking.customer_name || "",
+    guestCount: booking.guest_count || 0,
+    selectedSlots: booking.selected_slots || [],
+    selectedFoodSlots: booking.selected_food_slots || [],
+    paymentStatus: booking.payment_status || "pending",
+    bookingStatus: booking.booking_status,
+    bookingAmount: booking.total_amount,
+    eventType: booking.event_type || undefined,
+  }));
 }
 
 export function mapAvailabilityDays(days: AvailabilityDayApi[]): AvailabilityDay[] {
   const rows: AvailabilityDay[] = [];
   for (const day of days) {
-    const venueSlots = (day.slots || []).filter((slot) => slot.slot_kind !== "food");
-    const source = venueSlots.length ? venueSlots : [null];
-    for (const slot of source) {
-      const status = mapStatus(slot?.status || day.status);
+    const bookings = mapDayBookings(day);
+    const primary = bookings[0];
+    rows.push({
+      date: day.date,
+      status: mapStatus(day.status),
+      bookingId: primary?.bookingId,
+      bookingRef: primary?.id,
+      customerName: primary?.customerName,
+      eventType: undefined,
+      guests: day.guest_count ?? primary?.guestCount,
+      bookingCount: day.booking_count,
+      bookingIds: (day.booking_ids || []).map(String),
+      bookedSlotNames: day.booked_slot_names || [],
+      availableSlotNames: day.available_slot_names || [],
+      bookedFoodSlots: day.booked_food_slots || [],
+      availableFoodSlots: day.available_food_slots || [],
+      guestCount: day.guest_count || 0,
+      bookings,
+    });
+    for (const slot of day.slots || []) {
+      const linked =
+        bookings.find((booking) => booking.id === slot.booking_id) ||
+        bookings.find((booking) => booking.bookingId === slot.booking_ref);
       rows.push({
         date: day.date,
-        status:
-          day.status === "holiday"
-            ? "holiday"
-            : day.status === "blocked"
-              ? "blocked"
-              : status,
-        slot: slot?.slot_name,
-        slotKey: slot?.slot_key,
-        bookingId: slot?.booking_id || undefined,
-        bookingRef: slot?.booking_ref || undefined,
-        customerName: slot?.customer_name || undefined,
-        eventType: slot?.event_type || undefined,
-        guests: slot?.guests ?? undefined,
+        status: mapStatus(slot.status || day.status),
+        slot: slot.slot_name,
+        slotKey: slot.slot_key,
+        slotKind: slot.slot_kind === "food" ? "food" : "venue",
+        bookingId: slot.booking_ref || linked?.bookingId,
+        bookingRef: slot.booking_id || linked?.id,
+        customerName: slot.customer_name || linked?.customerName || undefined,
+        eventType: slot.event_type || linked?.eventType || undefined,
+        guests: slot.guests ?? linked?.guestCount,
       });
     }
   }

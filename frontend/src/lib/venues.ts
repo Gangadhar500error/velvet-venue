@@ -641,29 +641,39 @@ export function formToCreatePayload(form: VenueFormValues) {
       operating_hours: form.operatingHours || null,
       booking_confirmation: form.bookingConfirmation || "manual",
       cancellation_preset: form.cancellationPreset || null,
-      slots: (form.pricingSlots || []).map((s, i) => ({
-        id: /^[0-9a-f-]{36}$/i.test(s.id) ? s.id : undefined,
-        key: s.key,
-        name: s.name,
-        enabled: s.enabled,
-        time_label: s.timeLabel || null,
-        price: Number(s.price) || 0,
-        min_booking_amount: Number(s.minBookingAmount) || 0,
-        max_guests: Number(s.maxGuests) || null,
-        display_order: i,
-      })),
-      food_slots: (form.foodSlots || []).map((s, i) => ({
-        id: /^[0-9a-f-]{36}$/i.test(s.id) ? s.id : undefined,
-        key: s.key,
-        name: s.name,
-        enabled: s.enabled,
-        time_label: s.timeLabel || null,
-        veg_plate_cost: Number(s.vegPlateCost) || 0,
-        non_veg_plate_cost: Number(s.nonVegPlateCost) || 0,
-        min_guests: Number(s.minGuests) || null,
-        max_guests: Number(s.maxGuests) || null,
-        display_order: i,
-      })),
+      slots: (() => {
+        const all = form.pricingSlots || [];
+        const filtered =
+          pricingMode === "full_day"
+            ? all.filter((s) => s.key === "full_day")
+            : all.filter((s) => s.key !== "full_day");
+        return (filtered.length ? filtered : all).map((s, i) => ({
+          id: /^[0-9a-f-]{36}$/i.test(s.id) ? s.id : undefined,
+          key: s.key,
+          name: s.name,
+          enabled: s.enabled,
+          time_label: s.timeLabel || null,
+          price: Number(s.price) || 0,
+          min_booking_amount: Number(s.minBookingAmount) || 0,
+          max_guests: Number(s.maxGuests) || null,
+          display_order: i,
+        }));
+      })(),
+      food_slots:
+        pricingType === "venue_food"
+          ? (form.foodSlots || []).map((s, i) => ({
+              id: /^[0-9a-f-]{36}$/i.test(s.id) ? s.id : undefined,
+              key: s.key,
+              name: s.name,
+              enabled: s.enabled,
+              time_label: s.timeLabel || null,
+              veg_plate_cost: Number(s.vegPlateCost) || 0,
+              non_veg_plate_cost: Number(s.nonVegPlateCost) || 0,
+              min_guests: Number(s.minGuests) || null,
+              max_guests: Number(s.maxGuests) || null,
+              display_order: i,
+            }))
+          : [],
     },
   };
 }

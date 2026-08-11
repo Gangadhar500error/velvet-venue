@@ -7,6 +7,7 @@ from sqlalchemy.orm import selectinload
 
 from app.models.booking import (
     ACTIVE_BOOKING_STATUSES,
+    INACTIVE_BOOKING_STATUSES,
     Booking,
     BookingActivity,
     BookingDay,
@@ -263,6 +264,26 @@ class BookingRepository:
         if customer_id:
             stmt = stmt.where(Booking.customer_id == customer_id)
         result = await self.db.execute(stmt.order_by(Booking.start_date))
+        return list(result.scalars().unique().all())
+
+    async def list_occupying_for_venue(
+        self,
+        venue_id: uuid.UUID,
+        start: date,
+        end: date,
+    ) -> list[Booking]:
+        result = await self.db.execute(
+            select(Booking)
+            .options(*self._detail_options())
+            .where(
+                Booking.venue_id == venue_id,
+                Booking.deleted_at.is_(None),
+                Booking.booking_status.notin_(INACTIVE_BOOKING_STATUSES),
+                Booking.start_date <= end,
+                Booking.end_date >= start,
+            )
+            .order_by(Booking.start_date, Booking.created_at)
+        )
         return list(result.scalars().unique().all())
 
     async def list_recent_for_customer(self, customer_id: uuid.UUID, limit: int = 5) -> list[Booking]:

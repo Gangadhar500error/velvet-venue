@@ -66,6 +66,7 @@ const paymentStatusStyles: Record<PaymentStatus, string> = {
   paid: "bg-[#ECFDF3] text-[#16A34A] border-[#D3F8E1]",
   refunded: "bg-[#FDF4FF] text-[#A21CAF] border-[#F5D0FE]",
   failed: "bg-[#FEF2F2] text-[#B91C1C] border-[#FECACA]",
+  cancelled: "bg-[#F3F4F6] text-[#4B5563] border-[#E5E7EB]",
 };
 
 export function BookingStatusPill({ status }: { status: BookingStatus }) {

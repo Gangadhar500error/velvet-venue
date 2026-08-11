@@ -12,6 +12,7 @@ from app.models.booking import (
     ApprovalStatus,
     Booking,
     BookingFood,
+    INACTIVE_BOOKING_STATUSES,
     BookingService as BookingServiceItem,
     BookingSlot,
     BookingStatus,
@@ -62,6 +63,7 @@ from app.schemas.booking import (
 from app.services.availability_generator_service import AvailabilityGeneratorService
 from app.services.availability_service import AvailabilityService
 from app.services.booking_quote_service import BookingQuote, BookingQuoteService
+from app.services.payment_service import PaymentService
 from app.services.permission_service import DataScope, PermissionService
 from app.utils.availability_dates import month_bounds
 from app.utils.time_ranges import format_clock, parse_time_range
@@ -297,6 +299,11 @@ class BookingService:
                 gst_percent=float(booking.gst_percent),
                 gst_mode=booking.gst_mode,
                 payment_status=booking.payment_status,
+                platform_commission_percent=float(
+                    PaymentService.commission_percent_from_pricing(
+                        booking.venue.active_pricing() if booking.venue else None
+                    )
+                ),
             ),
             invoices=[
                 InvoiceResponse(
@@ -547,6 +554,8 @@ class BookingService:
             food_slots=payload.food_slots,
             services=payload.services,
             discount=payload.discount or Decimal("0"),
+            date_slots=payload.date_slots,
+            amount_received=payload.amount_received,
         )
         summary = quote.summary
         if summary is None:
@@ -568,6 +577,11 @@ class BookingService:
             vendor_amount=float(summary.vendor_receivable),
             gst_percent=float(summary.gst_percent),
             advance_percent=float(summary.advance_percent),
+            platform_commission_percent=float(summary.platform_commission_percent),
+            amount_received=float(summary.amount_received),
+            suggested_advance=float(summary.advance_payable),
+            payment_status=summary.payment_status,
+            gst_mode=pricing.gst_mode or "excluded",
         )
 
     async def create_booking(
@@ -602,8 +616,13 @@ class BookingService:
             food_slots=payload.food_slots,
             services=payload.services,
             discount=payload.discount or Decimal("0"),
+            date_slots=payload.date_slots,
+            amount_received=payload.amount_received
+            if payload.amount_received is not None
+            else Decimal("0"),
         )
         self._validate_quote(venue, quote, payload.guest_count)
+        dates = quote.dates or dates
         if await self.repo.has_duplicate(
             venue_id=venue.id,
             customer_id=customer.id,
@@ -673,7 +692,7 @@ class BookingService:
             total_amount=summary.booking_total,
             platform_commission=summary.platform_commission,
             vendor_amount=summary.vendor_receivable,
-            paid_amount=Decimal("0"),
+            paid_amount=summary.amount_received,
             currency="INR",
             gst_percent=summary.gst_percent,
             gst_mode=pricing.gst_mode or "excluded",
@@ -745,6 +764,32 @@ class BookingService:
             created_by=actor.id,
         )
         await self.repo.add_invoice(invoice)
+        payments = PaymentService.from_pricing(pricing)
+        received = Decimal(summary.amount_received or 0)
+        if received > 0:
+            payment = Payment(
+                id=uuid.uuid4(),
+                booking_id=booking.id,
+                invoice_id=invoice.id,
+                invoice_number=invoice.invoice_number,
+                payment_reference=f"PAY-{uuid.uuid4().hex[:10].upper()}",
+                transaction_id=None,
+                gateway=payload.payment_method,
+                amount=received,
+                payment_type=PaymentType.ADVANCE.value
+                if received < Decimal(summary.booking_total or 0)
+                else PaymentType.FINAL.value,
+                status=PaymentRecordStatus.SUCCESS.value,
+                paid_at=datetime.now(UTC),
+                remarks="Initial amount received",
+                collected_by=actor.full_name if getattr(actor, "full_name", None) else None,
+                created_by=actor.id,
+            )
+            await self.repo.add_payment(payment)
+        payments.apply_to_booking(booking, received, invoices=[invoice])
+        if confirmation == "automatic" and booking.booking_status == BookingStatus.PENDING.value:
+            booking.booking_status = BookingStatus.CONFIRMED.value
+            booking.approval_status = ApprovalStatus.APPROVED.value
         await self.repo.add_activity(
             booking.id,
             "created",
@@ -757,6 +802,13 @@ class BookingService:
             f"Invoice {invoice.invoice_number} generated.",
             actor.id,
         )
+        if received > 0:
+            await self.repo.add_activity(
+                booking.id,
+                "payment",
+                f"Payment of {float(received)} recorded.",
+                actor.id,
+            )
         await self.db.commit()
         booking = await self.repo.get_by_id(booking.id)
         assert booking is not None
@@ -874,21 +926,8 @@ class BookingService:
         return BookingMutationResponse(message="Booking rejected.", booking=self._to_detail(booking))
 
     def _refresh_payment_status(self, booking: Booking) -> None:
-        paid = Decimal(booking.paid_amount or 0)
-        total = Decimal(booking.total_amount or 0)
-        if paid <= 0:
-            booking.payment_status = PaymentStatus.PENDING.value
-            booking.remaining_amount = total
-            return
-        if paid >= total:
-            booking.payment_status = PaymentStatus.PAID.value
-            booking.remaining_amount = Decimal("0")
-            booking.paid_amount = total
-            for invoice in booking.invoices or []:
-                invoice.invoice_status = InvoiceStatus.PAID.value
-            return
-        booking.payment_status = PaymentStatus.PARTIAL.value
-        booking.remaining_amount = max(total - paid, Decimal("0"))
+        pricing = booking.venue.active_pricing() if booking.venue else None
+        PaymentService.from_pricing(pricing).apply_to_booking(booking)
 
     async def record_payment(
         self, actor: User, booking_id: uuid.UUID, payload: PaymentCreateRequest
@@ -900,6 +939,17 @@ class BookingService:
             )
         booking = await self._load_booking(actor, booking_id)
         amount = Decimal(payload.amount)
+        remaining = Decimal(booking.remaining_amount or 0)
+        if remaining <= 0:
+            raise HTTPException(
+                status_code=http_status.HTTP_409_CONFLICT,
+                detail="This booking has no remaining balance.",
+            )
+        if amount > remaining:
+            raise HTTPException(
+                status_code=http_status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="Amount received cannot exceed the remaining balance.",
+            )
         invoice = booking.invoices[0] if booking.invoices else None
         payment = Payment(
             id=uuid.uuid4(),
@@ -911,18 +961,32 @@ class BookingService:
             gateway=payload.gateway or payload.payment_method,
             amount=amount,
             payment_type=payload.payment_type,
-            status=PaymentRecordStatus.SUCCESS.value,
+            status=PaymentRecordStatus.SUCCESS.value
+            if payload.payment_type != "refund"
+            else PaymentRecordStatus.REFUNDED.value,
             paid_at=payload.paid_at or datetime.now(UTC),
             remarks=payload.remarks,
-            collected_by=payload.collected_by,
+            collected_by=payload.collected_by
+            or (actor.full_name if getattr(actor, "full_name", None) else None),
             created_by=actor.id,
         )
         await self.repo.add_payment(payment)
         booking.payments.append(payment)
-        booking.paid_amount = Decimal(booking.paid_amount or 0) + amount
         booking.payment_method = payload.payment_method or booking.payment_method
         booking.updated_by = actor.id
-        self._refresh_payment_status(booking)
+        if payload.payment_type == "refund":
+            booking.payment_status = PaymentStatus.REFUNDED.value
+        pricing = booking.venue.active_pricing() if booking.venue else None
+        payments = PaymentService.from_pricing(pricing)
+        if payload.payment_type == "refund":
+            paid = max(Decimal(booking.paid_amount or 0) - amount, Decimal("0"))
+            payments.apply_to_booking(booking, paid)
+            booking.payment_status = PaymentStatus.REFUNDED.value
+            booking.booking_status = BookingStatus.REFUNDED.value
+        else:
+            payments.apply_to_booking(
+                booking, Decimal(booking.paid_amount or 0) + amount
+            )
         await self.repo.add_activity(
             booking.id,
             "payment",
@@ -974,14 +1038,18 @@ class BookingService:
             venue.id, performed_by=actor.id, fill_missing_only=True
         )
         await self.db.commit()
-        day = await self.availability_days.get_day(venue.id, event_date)
-        if day is None:
-            return AvailabilityCheckResponse(
-                venue_id=venue.id,
-                date=event_date,
-                day_status="unavailable",
-                bookable=False,
-            )
+        try:
+            detail = await self.availability.day_detail(actor, venue.id, event_date)
+        except HTTPException as exc:
+            if exc.status_code == http_status.HTTP_404_NOT_FOUND:
+                return AvailabilityCheckResponse(
+                    venue_id=venue.id,
+                    date=event_date,
+                    day_status="unavailable",
+                    bookable=False,
+                )
+            raise
+        day = detail.day
         pricing = venue.active_pricing()
         slot_prices = {
             s.id: float(s.slot_price)
@@ -1053,26 +1121,26 @@ class BookingService:
         scoped_customer = await self._customer_id(actor)
         days = []
         if venue_id:
-            await self.generator.generate_for_venue(
-                venue_id, performed_by=actor.id, fill_missing_only=True
-            )
-            await self.db.commit()
-            rows = await self.availability_days.list_range(venue_id, start, end)
+            payload = await self.availability.month(actor, venue_id, year, month_number)
             days = [
                 {
-                    "date": row.availability_date.isoformat(),
+                    "date": row.date.isoformat() if hasattr(row.date, "isoformat") else str(row.date),
                     "status": row.status,
-                    "booking_count": len({s.booking_id for s in (row.slots or []) if s.booking_id}),
+                    "booking_count": row.booking_count,
                 }
-                for row in rows
+                for row in payload.days
             ]
-        bookings = await self.repo.list_for_calendar(
-            start=start,
-            end=end,
-            venue_id=venue_id,
-            vendor_id=scoped_vendor,
-            customer_id=scoped_customer,
-        )
+        bookings = [
+            booking
+            for booking in await self.repo.list_for_calendar(
+                start=start,
+                end=end,
+                venue_id=venue_id,
+                vendor_id=scoped_vendor,
+                customer_id=scoped_customer,
+            )
+            if booking.booking_status not in INACTIVE_BOOKING_STATUSES
+        ]
         items: list[CalendarBookingItem] = []
         for booking in bookings:
             for day in booking.days or []:

@@ -7,7 +7,7 @@ export type BookingStatus =
   | "cancelled"
   | "refunded";
 
-export type PaymentStatus = "unpaid" | "partial" | "paid" | "refunded" | "failed";
+export type PaymentStatus = "unpaid" | "partial" | "paid" | "refunded" | "failed" | "cancelled";
 
 export type InvoiceStatus = "not_generated" | "generated" | "sent" | "paid";
 
@@ -20,7 +20,8 @@ export type PaymentMethod =
   | "bank_transfer"
   | "cash"
   | "cheque"
-  | "link";
+  | "link"
+  | "other";
 
 export type TransactionStatus = "success" | "pending" | "failed" | "refunded";
 
@@ -150,6 +151,9 @@ export interface Booking {
   advancePaid: number;
   paidAmount: number;
   pendingAmount: number;
+  platformCommission?: number;
+  vendorReceivable?: number;
+  platformCommissionPercent?: number;
   refundAmount: number;
   taxAmount: number;
   discountAmount: number;
@@ -243,6 +247,8 @@ export interface BookingFormValues {
   eventEndDate?: string;
   /** Explicit selected dates (YYYY-MM-DD), comma-separated */
   selectedDates?: string;
+  /** JSON map of date -> slot keys for independent multi-date slot selection */
+  dateSlotsJson?: string;
   eventType: string;
   eventDate: string;
   guestCount: string;

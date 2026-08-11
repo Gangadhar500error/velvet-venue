@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
@@ -7,16 +8,60 @@ import { BookingWorkspace } from "../components/BookingWorkspace";
 import { Button } from "../../_components/ui/Button";
 import { PageHeader } from "../../_components/ui/PageHeader";
 import { confirmAction, notify } from "../../_components/ui/Toast";
-import { useDemoStore } from "../../store/demoStore";
+import type { Booking } from "../types";
+import { cancelBooking, fetchBooking, mapBookingDetail } from "@/lib/bookings";
 
 export default function ViewBookingPage() {
   const params = useParams();
   const id = params.id as string;
   const router = useRouter();
-  const booking = useDemoStore((s) => s.bookings.find((b) => b.id === id || b.bookingId === id));
-  const updateBooking = useDemoStore((s) => s.updateBooking);
+  const [booking, setBooking] = useState<Booking | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [notFound, setNotFound] = useState(false);
 
-  if (!booking) {
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      setNotFound(false);
+      try {
+        const detail = await fetchBooking(id);
+        if (!cancelled) setBooking(mapBookingDetail(detail));
+      } catch {
+        if (!cancelled) {
+          setBooking(null);
+          setNotFound(true);
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [id]);
+
+  if (loading) {
+    return (
+      <div className="space-y-4 animate-fadeIn">
+        <PageHeader
+          title="Loading Booking"
+          subtitle="Fetching reservation details."
+          breadcrumbs={[
+            { label: "Dashboard", href: "/admin" },
+            { label: "Booking Management" },
+            { label: "Bookings", href: "/admin/bookings" },
+            { label: "Details" },
+          ]}
+        />
+        <div className="bg-white border border-[#E8EAF0] rounded-[14px] px-6 py-14 text-center text-sm text-[#6B7280]">
+          Loading booking details…
+        </div>
+      </div>
+    );
+  }
+
+  if (notFound || !booking) {
     return (
       <div className="space-y-4 animate-fadeIn">
         <PageHeader
@@ -50,6 +95,7 @@ export default function ViewBookingPage() {
     <BookingWorkspace
       booking={booking}
       mode="view"
+      onBookingUpdated={setBooking}
       onEdit={() => router.push(`/admin/bookings/${booking.id}/edit`)}
       onDelete={async () => {
         const ok = await confirmAction({
@@ -58,12 +104,13 @@ export default function ViewBookingPage() {
           confirmLabel: "Cancel Booking",
         });
         if (!ok) return;
-        updateBooking(booking.id, {
-          bookingStatus: "cancelled",
-          updatedAt: new Date().toISOString(),
-        });
-        notify.statusUpdated("Booking cancelled successfully.");
-        router.push("/admin/bookings");
+        try {
+          await cancelBooking(booking.id);
+          notify.statusUpdated("Booking cancelled successfully.");
+          router.push("/admin/bookings");
+        } catch (error) {
+          notify.validation(error instanceof Error ? error.message : "Unable to cancel booking.");
+        }
       }}
     />
   );

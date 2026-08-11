@@ -109,6 +109,19 @@ export interface VenueDocument {
   expiryDate?: string;
 }
 
+export interface AvailabilityDayBooking {
+  id: string;
+  bookingId: string;
+  customerName: string;
+  guestCount: number;
+  selectedSlots: string[];
+  selectedFoodSlots: string[];
+  paymentStatus: string;
+  bookingStatus: string;
+  bookingAmount?: number;
+  eventType?: string;
+}
+
 export interface AvailabilityDay {
   date: string;
   status: DayAvailabilityStatus;
@@ -118,8 +131,17 @@ export interface AvailabilityDay {
   guests?: number;
   slot?: string;
   slotKey?: string;
-  /** Internal booking record id for navigation */
+  slotKind?: "venue" | "food";
+  /** Internal booking record id (UUID) for navigation */
   bookingRef?: string;
+  bookingCount?: number;
+  bookingIds?: string[];
+  bookedSlotNames?: string[];
+  availableSlotNames?: string[];
+  bookedFoodSlots?: string[];
+  availableFoodSlots?: string[];
+  guestCount?: number;
+  bookings?: AvailabilityDayBooking[];
 }
 
 export interface RatingDistributionRow {

@@ -5,8 +5,9 @@ from datetime import date
 from decimal import Decimal
 
 from app.models.venue import Venue, VenueFoodSlot, VenuePricing, VenueSlot
-from app.schemas.booking import FoodSelectionInput, ServiceSelectionInput
+from app.schemas.booking import DateSlotInput, FoodSelectionInput, ServiceSelectionInput
 from app.services.booking_calculation_service import BookingCalculationService, BookingSummary
+from app.services.payment_service import PaymentService
 from app.utils.time_ranges import format_clock, parse_time_range
 
 
@@ -115,24 +116,52 @@ class BookingQuoteService:
         food_slots: list[FoodSelectionInput],
         services: list[ServiceSelectionInput],
         discount: Decimal = Decimal("0"),
+        date_slots: list[DateSlotInput] | None = None,
+        amount_received: Decimal | None = None,
     ) -> BookingQuote:
+        calculator = BookingCalculationService(
+            PaymentService.commission_percent_from_pricing(pricing)
+        )
         quote = BookingQuote(
             dates=dates,
             booking_type=booking_type,
             booking_mode=booking_mode,
         )
-        venue_slots = self.resolve_slots(
-            pricing, slot_ids=slot_ids, slot_keys=slot_keys, booking_mode=booking_mode
-        )
-        for event_date in dates:
-            for slot in venue_slots:
-                quote.slots.append(
-                    QuotedSlot(slot=slot, event_date=event_date, price=Decimal(slot.slot_price or 0))
+        if date_slots:
+            dated = [item for item in date_slots if item.event_date]
+            extra_dates = [item.event_date for item in dated if item.event_date not in quote.dates]
+            if extra_dates:
+                quote.dates = sorted(set(quote.dates + extra_dates))
+            for item in dated:
+                venue_slots = self.resolve_slots(
+                    pricing,
+                    slot_ids=item.slot_ids,
+                    slot_keys=item.slot_keys,
+                    booking_mode=booking_mode,
                 )
+                for slot in venue_slots:
+                    quote.slots.append(
+                        QuotedSlot(
+                            slot=slot,
+                            event_date=item.event_date,
+                            price=Decimal(slot.slot_price or 0),
+                        )
+                    )
+        else:
+            venue_slots = self.resolve_slots(
+                pricing, slot_ids=slot_ids, slot_keys=slot_keys, booking_mode=booking_mode
+            )
+            for event_date in quote.dates:
+                for slot in venue_slots:
+                    quote.slots.append(
+                        QuotedSlot(
+                            slot=slot, event_date=event_date, price=Decimal(slot.slot_price or 0)
+                        )
+                    )
         quote.venue_price = sum((item.price for item in quote.slots), Decimal("0"))
 
         if booking_type == "venue_food":
-            for event_date in dates:
+            for event_date in quote.dates:
                 for food, selection in self.resolve_foods(pricing, food_slots):
                     veg = int(selection.veg_count or 0)
                     nonveg = int(selection.nonveg_count or 0)
@@ -162,7 +191,7 @@ class BookingQuoteService:
                 )
             )
         quote.service_total = sum((item.subtotal for item in quote.services), Decimal("0"))
-        quote.summary = self.calculator.calculate_booking_summary(
+        quote.summary = calculator.calculate_booking_summary(
             venue_price=quote.venue_price,
             food_total=quote.food_total,
             service_total=quote.service_total,
@@ -170,6 +199,7 @@ class BookingQuoteService:
             advance_percent=Decimal(pricing.advance_percent or 0),
             gst_mode=pricing.gst_mode or "excluded",
             discount=discount,
+            amount_received=amount_received,
         )
         return quote
 

@@ -27,6 +27,7 @@ import {
 import { fetchVenue, fetchVenues, mapVenueDetail, mapVenueListItem } from "@/lib/venues";
 import {
   fetchAvailabilityWindow,
+  isBookingUuid,
   type AvailabilityDashboardApi,
 } from "@/lib/availability";
 
@@ -198,6 +199,7 @@ export function BookingCalendarWorkspace() {
     dates?: string[];
     slot: string;
     slots?: string[];
+    dateSlots?: Array<{ date: string; slotKey: string; slotName: string }>;
     status: DayAvailabilityStatus;
     eventEndDate?: string;
     amount?: number;
@@ -222,6 +224,12 @@ export function BookingCalendarWorkspace() {
       params.set("eventEndDate", payload.eventEndDate);
     }
     if (payload.slots?.length) params.set("slots", payload.slots.join("|"));
+    if (payload.dateSlots?.length) {
+      params.set(
+        "dateSlots",
+        payload.dateSlots.map((item) => `${item.date}:${item.slotKey}`).join(";")
+      );
+    }
     if (venue.ownerId) params.set("ownerId", venue.ownerId);
     if (venue.ownerName) params.set("ownerName", venue.ownerName);
     if (venue.operatingHours) params.set("hours", venue.operatingHours);
@@ -246,7 +254,7 @@ export function BookingCalendarWorkspace() {
   };
 
   const openBooking = (row: { bookingRef?: string; bookingId?: string }) => {
-    const target = row.bookingRef || row.bookingId;
+    const target = [row.bookingId, row.bookingRef].find(isBookingUuid);
     if (!target) return;
     router.push(`/admin/bookings/${target}`);
   };

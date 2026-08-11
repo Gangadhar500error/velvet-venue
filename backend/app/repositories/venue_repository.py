@@ -2,7 +2,7 @@ import re
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import Select, func, or_, select
+from sqlalchemy import Integer, Select, cast, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -60,9 +60,12 @@ class VenueRepository:
         return result.scalar_one_or_none()
 
     async def next_venue_code(self) -> str:
-        result = await self.db.execute(select(func.count()).select_from(Venue))
-        count = int(result.scalar_one() or 0)
-        return f"VEN-{40000 + count + 1}"
+        digits = func.nullif(
+            func.regexp_replace(Venue.venue_code, r"[^0-9]", "", "g"), ""
+        )
+        result = await self.db.execute(select(func.max(cast(digits, Integer))))
+        highest = int(result.scalar_one() or 40000)
+        return f"VEN-{max(highest, 40000) + 1}"
 
     async def create(self, venue: Venue) -> Venue:
         self.db.add(venue)
@@ -285,7 +288,7 @@ class VenueRepository:
                 or_(VenueAmenity.code == code, VenueAmenity.name.ilike(cleaned))
             )
         )
-        existing = result.scalar_one_or_none()
+        existing = result.scalars().first()
         if existing:
             if not existing.icon or not existing.category:
                 icon, category = amenity_meta(existing.code, existing.name)
@@ -306,7 +309,7 @@ class VenueRepository:
                 or_(VenueService.code == code, VenueService.name.ilike(cleaned))
             )
         )
-        existing = result.scalar_one_or_none()
+        existing = result.scalars().first()
         if existing:
             if not existing.icon:
                 existing.icon = service_icon(existing.code, existing.name)
@@ -324,7 +327,7 @@ class VenueRepository:
                 or_(EventType.code == code, EventType.name.ilike(cleaned))
             )
         )
-        existing = result.scalar_one_or_none()
+        existing = result.scalars().first()
         if existing:
             return existing
         item = EventType(code=code, name=cleaned)

@@ -26,6 +26,8 @@ class BookingSummary:
     gst_percent: Decimal
     advance_percent: Decimal
     platform_commission_percent: Decimal
+    amount_received: Decimal = Decimal("0")
+    payment_status: str = "pending"
 
     def as_floats(self) -> dict[str, float]:
         return {
@@ -41,6 +43,7 @@ class BookingSummary:
             "gst_percent": float(self.gst_percent),
             "advance_percent": float(self.advance_percent),
             "platform_commission_percent": float(self.platform_commission_percent),
+            "amount_received": float(self.amount_received),
         }
 
 
@@ -58,6 +61,7 @@ class BookingCalculationService:
         advance_percent: Decimal = Decimal("0"),
         gst_mode: str = "excluded",
         discount: Decimal = Decimal("0"),
+        amount_received: Decimal | None = None,
     ) -> BookingSummary:
         venue_price = Decimal(venue_price or 0)
         food_total = Decimal(food_total or 0)
@@ -81,9 +85,23 @@ class BookingCalculationService:
             else Decimal("0"),
             booking_total,
         )
-        commission = money_round(advance * self.commission_percent / Decimal("100"))
-        vendor = max(advance - commission, Decimal("0"))
-        remaining = max(booking_total - advance, Decimal("0"))
+        if amount_received is None:
+            received = advance
+        else:
+            received = min(max(Decimal(amount_received or 0), Decimal("0")), booking_total)
+        commission = (
+            money_round(received * self.commission_percent / Decimal("100"))
+            if received > 0 and self.commission_percent > 0
+            else Decimal("0")
+        )
+        vendor = max(received - commission, Decimal("0"))
+        remaining = max(booking_total - received, Decimal("0"))
+        if received <= 0:
+            payment_status = "pending"
+        elif booking_total > 0 and received >= booking_total:
+            payment_status = "paid"
+        else:
+            payment_status = "partial"
         return BookingSummary(
             venue_price=venue_price,
             food_total=food_total,
@@ -97,6 +115,8 @@ class BookingCalculationService:
             gst_percent=gst_percent,
             advance_percent=advance_percent,
             platform_commission_percent=self.commission_percent,
+            amount_received=received,
+            payment_status=payment_status,
         )
 
     def calculate_full_day(

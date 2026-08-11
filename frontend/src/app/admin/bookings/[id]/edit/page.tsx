@@ -19,18 +19,42 @@ import { Button } from "../../../_components/ui/Button";
 import { PageHeader } from "../../../_components/ui/PageHeader";
 import { notify } from "../../../_components/ui/Toast";
 import { useDemoStore } from "../../../store/demoStore";
+import { fetchBooking, mapBookingDetail } from "@/lib/bookings";
+import type { Booking } from "../../types";
 
 export default function EditBookingPage() {
   const params = useParams();
   const id = params.id as string;
   const router = useRouter();
-  const booking = useDemoStore((s) => s.bookings.find((b) => b.id === id || b.bookingId === id));
+  const storeBooking = useDemoStore((s) => s.bookings.find((b) => b.id === id || b.bookingId === id));
   const updateBooking = useDemoStore((s) => s.updateBooking);
   const venues = useDemoStore((s) => s.venues);
+  const [booking, setBooking] = useState<Booking | null>(storeBooking || null);
   const [form, setForm] = useState<BookingFormValues | null>(() =>
-    booking ? bookingToFormValues(booking) : null
+    storeBooking ? bookingToFormValues(storeBooking) : null
   );
+  const [loading, setLoading] = useState(!storeBooking);
   const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const detail = await fetchBooking(id);
+        if (cancelled) return;
+        const mapped = mapBookingDetail(detail);
+        setBooking(mapped);
+        setForm(bookingToFormValues(mapped));
+      } catch {
+        if (!cancelled && !storeBooking) setBooking(null);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [id]);
 
   // Keep payment status pills in sync after Record Payment updates the store
   useEffect(() => {
@@ -47,6 +71,26 @@ export default function EditBookingPage() {
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [booking?.paidAmount, booking?.paymentStatus, booking?.bookingStatus, booking?.pendingAmount]);
+
+  if (loading) {
+    return (
+      <div className="space-y-4 animate-fadeIn">
+        <PageHeader
+          title="Loading Booking"
+          subtitle="Fetching reservation details."
+          breadcrumbs={[
+            { label: "Dashboard", href: "/admin" },
+            { label: "Booking Management" },
+            { label: "Bookings", href: "/admin/bookings" },
+            { label: "Edit" },
+          ]}
+        />
+        <div className="bg-white border border-[#E8EAF0] rounded-[14px] px-6 py-14 text-center text-sm text-[#6B7280]">
+          Loading booking…
+        </div>
+      </div>
+    );
+  }
 
   if (!booking || !form) {
     return (
@@ -238,6 +282,19 @@ export default function EditBookingPage() {
       onCancel={handleCancel}
       onSave={handleSave}
       onSaveDraft={handleSaveDraft}
+      onBookingUpdated={(next) => {
+        setBooking(next);
+        setForm((prev) =>
+          prev
+            ? {
+                ...prev,
+                paymentStatus: next.paymentStatus,
+                bookingStatus: next.bookingStatus,
+                advancePaid: String(next.paidAmount || next.advancePaid || prev.advancePaid || ""),
+              }
+            : prev
+        );
+      }}
       saving={saving}
     />
   );

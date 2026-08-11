@@ -20,6 +20,7 @@ interface BookingWorkspaceProps {
   onSave?: () => void;
   onSaveDraft?: () => void;
   onDelete?: () => void;
+  onBookingUpdated?: (booking: Booking) => void;
   saving?: boolean;
   pageLabel?: string;
   availabilityContext?: {
@@ -51,6 +52,7 @@ export function BookingWorkspace({
   onSave,
   onSaveDraft,
   onDelete,
+  onBookingUpdated,
   saving,
   pageLabel,
   availabilityContext,
@@ -264,6 +266,7 @@ export function BookingWorkspace({
           onCancel={onCancel}
           onSave={onSave}
           onSaveDraft={onSaveDraft}
+          onBookingUpdated={onBookingUpdated}
         />
       </div>
     </div>

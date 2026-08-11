@@ -603,9 +603,12 @@ class VenueService:
         if amenities is not None:
             venue.amenity_links.clear()
             await self.db.flush()
+            seen: set[str] = set()
             for name in amenities:
-                if not name.strip():
+                key = name.strip().lower()
+                if not key or key in seen:
                     continue
+                seen.add(key)
                 amenity = await self.repo.get_or_create_amenity(name)
                 venue.amenity_links.append(
                     VenueAmenityMapping(amenity_id=amenity.id)
@@ -613,9 +616,12 @@ class VenueService:
         if services is not None:
             venue.service_links.clear()
             await self.db.flush()
+            seen = set()
             for name in services:
-                if not name.strip():
+                key = name.strip().lower()
+                if not key or key in seen:
                     continue
+                seen.add(key)
                 service = await self.repo.get_or_create_service(name)
                 venue.service_links.append(
                     VenueServiceMapping(service_id=service.id)
@@ -623,9 +629,12 @@ class VenueService:
         if event_categories is not None:
             venue.event_links.clear()
             await self.db.flush()
+            seen = set()
             for name in event_categories:
-                if not name.strip():
+                key = name.strip().lower()
+                if not key or key in seen:
                     continue
+                seen.add(key)
                 event = await self.repo.get_or_create_event_type(name)
                 venue.event_links.append(
                     VenueEventMapping(event_type_id=event.id)
@@ -899,36 +908,43 @@ class VenueService:
             created_by=actor.id,
             updated_by=actor.id,
         )
-        await self.repo.create(venue)
-        await self._sync_mappings(
-            venue,
-            amenities=payload.amenities,
-            services=payload.services,
-            event_categories=payload.event_categories,
-        )
-        if payload.pricing:
-            self._apply_pricing(venue, payload.pricing, actor_id=actor.id)
-        else:
-            venue.pricing_records.append(
-                VenuePricing(
-                    id=uuid.uuid4(),
-                    venue_id=venue.id,
-                    created_by=actor.id,
-                    updated_by=actor.id,
-                )
+        try:
+            await self.repo.create(venue)
+            await self._sync_mappings(
+                venue,
+                amenities=payload.amenities,
+                services=payload.services,
+                event_categories=payload.event_categories,
             )
-        if payload.gallery:
-            self._apply_gallery(venue, payload.gallery)
-        if payload.documents:
-            self._apply_documents(venue, payload.documents)
-        else:
-            for slot in DOCUMENT_SLOTS:
-                venue.documents.append(
-                    VenueDocument(document_type=slot, name=slot, status="pending")
+            if payload.pricing:
+                self._apply_pricing(venue, payload.pricing, actor_id=actor.id)
+            else:
+                venue.pricing_records.append(
+                    VenuePricing(
+                        id=uuid.uuid4(),
+                        venue_id=venue.id,
+                        created_by=actor.id,
+                        updated_by=actor.id,
+                    )
                 )
-        if payload.pricing:
-            await self.pricing.sync_availability(venue.id, actor.id)
-        await self.db.commit()
+            if payload.gallery:
+                self._apply_gallery(venue, payload.gallery)
+            if payload.documents:
+                self._apply_documents(venue, payload.documents)
+            else:
+                for slot in DOCUMENT_SLOTS:
+                    venue.documents.append(
+                        VenueDocument(document_type=slot, name=slot, status="pending")
+                    )
+            if payload.pricing:
+                await self.pricing.sync_availability(venue.id, actor.id)
+            await self.db.commit()
+        except IntegrityError as exc:
+            await self.db.rollback()
+            raise HTTPException(
+                status_code=http_status.HTTP_409_CONFLICT,
+                detail="Venue could not be created because of a data conflict. Please retry.",
+            ) from exc
         venue = await self.repo.get_by_id(venue.id)
         assert venue is not None
         return VenueMutationResponse(
@@ -1272,3 +1288,4 @@ class VenueService:
             "event_items": [{"id": str(e.id), "name": e.name} for e in events],
             "cities": await self.repo.distinct_cities(),
         }
+

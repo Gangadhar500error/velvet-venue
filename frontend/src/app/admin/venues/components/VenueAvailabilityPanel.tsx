@@ -21,6 +21,7 @@ import {
   monthSlotStats,
   normalizePricingMethod,
   pricingMethodLabel,
+  resolveFoodSlotsForDate,
   resolveSlotsForDate,
   toYmd,
   type CalendarDayTone,
@@ -28,12 +29,14 @@ import {
   type LiveBookingLite,
   type SlotDetailRow,
 } from "../availability";
+import { fetchAvailabilityDay, isBookingUuid } from "@/lib/availability";
 
 export interface AvailabilityBookPayload {
   date: string;
   dates?: string[];
   slot: string;
   slots?: string[];
+  dateSlots?: Array<{ date: string; slotKey: string; slotName: string }>;
   status: DayAvailabilityStatus;
   eventEndDate?: string;
   amount?: number;
@@ -43,7 +46,7 @@ interface VenueAvailabilityPanelProps {
   venue: Venue;
   availability: AvailabilityDay[];
   onBook: (payload: AvailabilityBookPayload) => void;
-  onViewBooking: (row: { bookingRef?: string; bookingId?: string }) => void;
+  onViewBooking: (row: { bookingId: string; bookingRef?: string }) => void;
   hideSummaryStats?: boolean;
   calendarPageMode?: boolean;
   bookActionLabel?: string;
@@ -95,36 +98,74 @@ export function VenueAvailabilityPanel({
   const monthPrefix = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, "0")}`;
 
   const liveBookings = useMemo(() => {
-    const fromStore: LiveBookingLite[] = [];
-
-    const byBooking = new Map<string, string[]>();
-    availability.forEach((a) => {
-      if (a.status !== "booked" || !a.bookingId) return;
-      if (fromStore.some((b) => b.bookingId === a.bookingId)) return;
-      const list = byBooking.get(a.bookingId) || [];
-      list.push(a.date);
-      byBooking.set(a.bookingId, list);
-    });
-    byBooking.forEach((dates, bookingId) => {
-      const uniq = Array.from(new Set(dates)).sort();
-      if (uniq.length < 2) return;
-      const sample = availability.find((a) => a.bookingId === bookingId);
-      fromStore.push({
-        id: sample?.bookingRef || `avail-${bookingId}`,
-        bookingId,
-        customerName: sample?.customerName || "Guest",
-        eventType: sample?.eventType || "Event",
-        eventDate: uniq[0],
-        eventEndDate: uniq[uniq.length - 1],
-        selectedDates: uniq.join(","),
-        guestCount: sample?.guests || 0,
-        slot: "Full Day",
-        bookingStatus: "confirmed",
-      });
-    });
-
-    return fromStore;
-  }, [venue.venueId, venue.id, availability]);
+    const byId = new Map<string, LiveBookingLite>();
+    const rememberDate = (booking: LiveBookingLite, date: string) => {
+      const dates = new Set(
+        (booking.selectedDates || "")
+          .split(",")
+          .map((d) => d.trim())
+          .filter(Boolean)
+      );
+      dates.add(date);
+      const sorted = Array.from(dates).sort();
+      booking.selectedDates = sorted.join(",");
+      booking.eventDate = sorted[0];
+      booking.eventEndDate = sorted[sorted.length - 1];
+    };
+    for (const row of availability) {
+      for (const booking of row.bookings || []) {
+        const existing = byId.get(booking.id);
+        if (!existing) {
+          byId.set(booking.id, {
+            id: booking.id,
+            bookingId: booking.bookingId,
+            customerName: booking.customerName || "Guest",
+            eventType: booking.eventType || "Event",
+            eventDate: row.date,
+            eventEndDate: row.date,
+            selectedDates: row.date,
+            guestCount: booking.guestCount,
+            slot: (booking.selectedSlots || []).join(", ") || row.slot || "Full Day",
+            bookingStatus: booking.bookingStatus,
+            paymentStatus: booking.paymentStatus,
+            bookingAmount: booking.bookingAmount,
+            selectedSlots: booking.selectedSlots,
+            selectedFoodSlots: booking.selectedFoodSlots,
+          });
+        } else {
+          rememberDate(existing, row.date);
+        }
+      }
+      const slotBookingId = [row.bookingRef, row.bookingId].find(isBookingUuid);
+      if (slotBookingId && (row.status === "booked" || row.status === "completed")) {
+        const existing = byId.get(slotBookingId);
+        if (!existing) {
+          byId.set(slotBookingId, {
+            id: slotBookingId,
+            bookingId:
+              row.bookingId && !isBookingUuid(row.bookingId) ? row.bookingId : slotBookingId,
+            customerName: row.customerName || "Guest",
+            eventType: row.eventType || "Event",
+            eventDate: row.date,
+            eventEndDate: row.date,
+            selectedDates: row.date,
+            guestCount: row.guests || row.guestCount || 0,
+            slot: row.slot || row.slotKey || "Full Day",
+            bookingStatus: row.status === "completed" ? "completed" : "confirmed",
+            selectedSlots: row.slot ? [row.slot] : row.slotKey ? [row.slotKey] : [],
+          });
+        } else {
+          rememberDate(existing, row.date);
+          if (!existing.customerName && row.customerName) existing.customerName = row.customerName;
+          if (row.slot && !(existing.selectedSlots || []).includes(row.slot)) {
+            existing.selectedSlots = [...(existing.selectedSlots || []), row.slot];
+            existing.slot = existing.selectedSlots.join(", ");
+          }
+        }
+      }
+    }
+    return Array.from(byId.values());
+  }, [availability]);
 
   const stats = useMemo(
     () => monthSlotStats(venue, availability, monthPrefix, liveBookings),
@@ -139,6 +180,16 @@ export function VenueAvailabilityPanel({
   const expandedSlots = useMemo(() => {
     if (!expandedDate) return [];
     return resolveSlotsForDate({
+      venue,
+      date: expandedDate,
+      availability,
+      liveBookings,
+    });
+  }, [expandedDate, venue, availability, liveBookings]);
+
+  const expandedFood = useMemo(() => {
+    if (!expandedDate) return [];
+    return resolveFoodSlotsForDate({
       venue,
       date: expandedDate,
       availability,
@@ -174,6 +225,10 @@ export function VenueAvailabilityPanel({
       summary: DaySummary;
       booking: LiveBookingLite | null;
       timeLabel: string;
+      bookingCount: number;
+      bookedSlots: string;
+      foodSlots: string;
+      guestCount: number;
     }> = [];
     for (let d = 1; d <= count; d += 1) {
       const date = `${monthPrefix}-${String(d).padStart(2, "0")}`;
@@ -181,6 +236,7 @@ export function VenueAvailabilityPanel({
       if (statusFilter) {
         const tone = summary.statusTone;
         if (statusFilter === "available" && tone !== "available") continue;
+        if (statusFilter === "partial" && tone !== "partial") continue;
         if (statusFilter === "booked" && tone !== "booked") continue;
         if (statusFilter === "completed" && tone !== "completed") continue;
         if (statusFilter === "blocked" && tone !== "blocked") continue;
@@ -198,22 +254,46 @@ export function VenueAvailabilityPanel({
       }
 
       let timeLabel = venue.operatingHours || "9 AM – 11 PM";
+      const slots = resolveSlotsForDate({
+        venue,
+        date,
+        availability,
+        liveBookings,
+      });
       if (isSlotBased) {
-        const slots = resolveSlotsForDate({
-          venue,
-          date,
-          availability,
-          liveBookings,
-        });
-        timeLabel =
-          slots.map((s) => s.slotName).join(", ") || "—";
+        timeLabel = slots.map((s) => s.slotName).join(", ") || "—";
       }
+      const foods = resolveFoodSlotsForDate({
+        venue,
+        date,
+        availability,
+        liveBookings,
+      });
 
+      const dayRow = availability.find((row) => row.date === date && !row.slotKey);
       rows.push({
         date,
         summary,
         booking: summary.coveringBookings[0] || null,
         timeLabel,
+        bookingCount: dayRow?.bookingCount ?? summary.coveringBookings.length,
+        bookedSlots: dayRow?.bookedSlotNames?.join(", ") || slots
+          .filter((s) => s.status === "booked" || s.status === "completed")
+          .map((s) => s.slotName)
+          .join(", ") || "—",
+        availableSlots: dayRow?.availableSlotNames?.join(", ") || slots
+          .filter((s) => s.status === "available")
+          .map((s) => s.slotName)
+          .join(", ") || "—",
+        bookedFood: dayRow?.bookedFoodSlots?.join(", ") || foods
+          .filter((s) => s.status === "booked" || s.status === "completed")
+          .map((s) => s.slotName)
+          .join(", ") || "—",
+        availableFood: dayRow?.availableFoodSlots?.join(", ") || foods
+          .filter((s) => s.status === "available")
+          .map((s) => s.slotName)
+          .join(", ") || "—",
+        guestCount: dayRow?.guestCount ?? summary.coveringBookings.reduce((sum, b) => sum + (b.guestCount || 0), 0),
       });
     }
     return rows;
@@ -294,13 +374,69 @@ export function VenueAvailabilityPanel({
     setFocusDate(date);
   };
 
-  const handleDayClick = (date: string) => {
+  const bookingIdsForDate = (date: string) => {
+    const ids = new Set<string>();
+    for (const booking of daySummaries.get(date)?.coveringBookings || []) {
+      if (isBookingUuid(booking.id)) ids.add(booking.id);
+    }
+    for (const row of availability) {
+      if (row.date !== date) continue;
+      for (const id of row.bookingIds || []) {
+        if (isBookingUuid(id)) ids.add(id);
+      }
+      if (isBookingUuid(row.bookingRef)) ids.add(row.bookingRef);
+      if (isBookingUuid(row.bookingId)) ids.add(row.bookingId);
+      for (const booking of row.bookings || []) {
+        if (isBookingUuid(booking.id)) ids.add(booking.id);
+      }
+    }
+    return Array.from(ids);
+  };
+
+  const openBookedDate = async (date: string, includePartial = false) => {
+    const tone = daySummaries.get(date)?.statusTone;
+    if (tone !== "booked" && tone !== "completed" && !(includePartial && tone === "partial")) {
+      return false;
+    }
+    let ids = bookingIdsForDate(date);
+    if (ids.length === 0) {
+      try {
+        const detail = await fetchAvailabilityDay(venue.id, date);
+        const fetched = [
+          ...(detail.bookings || []).map((booking) => booking.booking_id),
+          ...(detail.day?.bookings || []).map((booking) => booking.booking_id),
+          ...(detail.day?.booking_ids || []),
+        ].filter(isBookingUuid);
+        ids = Array.from(new Set(fetched));
+      } catch {
+        return false;
+      }
+    }
+    if (ids.length === 1) {
+      onViewBooking({ bookingId: ids[0] });
+      return true;
+    }
+    if (ids.length > 1) {
+      setFocusDate(date);
+      setExpandedDate(null);
+      return true;
+    }
+    return false;
+  };
+
+  const handleDayClick = async (date: string) => {
+    const tone = daySummaries.get(date)?.statusTone;
+    if (tone === "partial") {
+      setFocusDate(date);
+      setExpandedDate(date);
+      return;
+    }
+    if (await openBookedDate(date)) return;
     setFocusDate(date);
     if (isSlotBased) {
       setExpandedDate(date);
       return;
     }
-    // Full Day: click toggles selection when available
     if (isDateSelectable(date)) {
       toggleFullDayDate(date);
     }
@@ -351,6 +487,7 @@ export function VenueAvailabilityPanel({
         dates,
         slot: slotNames.join(", "),
         slots: slotKeys,
+        dateSlots: slotPicks,
         status: "available",
         eventEndDate: dates[dates.length - 1],
       });
@@ -467,6 +604,7 @@ export function VenueAvailabilityPanel({
             >
               <option value="">Status: All</option>
               <option value="available">Available</option>
+              <option value="partial">Partially Booked</option>
               <option value="booked">Booked</option>
               <option value="completed">Completed</option>
               <option value="blocked">Blocked</option>
@@ -537,7 +675,8 @@ export function VenueAvailabilityPanel({
 
               <div className="flex flex-wrap gap-x-4 gap-y-2 text-[11px] text-[#6B7280]">
                 <LegendSwatch tone="available" label="Available" />
-                <LegendSwatch tone="booked" label="Booked" />
+                <LegendSwatch tone="partial" label="Partially Booked" />
+                <LegendSwatch tone="booked" label="Fully Booked" />
                 <LegendSwatch tone="completed" label="Completed" />
                 <LegendSwatch tone="blocked" label="Blocked" />
                 <LegendSwatch tone="no_booking" label="No Booking" />
@@ -619,6 +758,13 @@ export function VenueAvailabilityPanel({
                       <p className={`mt-2 text-[10px] font-semibold leading-tight ${summaryTextClass(tone)}`}>
                         {shortStatusLabel(tone)}
                       </p>
+                      {summary.coveringBookings[0]?.customerName ? (
+                        <p className="mt-1 text-[10px] text-[#4B5563] truncate">
+                          {summary.coveringBookings.length > 1
+                            ? `${summary.coveringBookings.length} bookings`
+                            : summary.coveringBookings[0].customerName}
+                        </p>
+                      ) : null}
                     </button>
                   );
                 })}
@@ -654,12 +800,19 @@ export function VenueAvailabilityPanel({
                           (p) => p.date === slot.date && p.slotKey === slot.slotKey
                         );
                         const available = slot.status === "available";
+                        const bookedId = [slot.bookingId, slot.bookingRef].find(isBookingUuid);
                         return (
                           <button
                             key={`${slot.date}-${slot.slotKey}`}
                             type="button"
-                            disabled={!available && !picked}
-                            onClick={() => toggleSlotPick(slot)}
+                            disabled={!available && !picked && !bookedId}
+                            onClick={() => {
+                              if (!available && bookedId) {
+                                onViewBooking({ bookingId: bookedId });
+                                return;
+                              }
+                              toggleSlotPick(slot);
+                            }}
                             className={`rounded-[10px] border px-3.5 py-3 text-left transition-colors ${
                               picked
                                 ? "border-[#C89B3C] bg-[#FFF8F3]"
@@ -681,11 +834,72 @@ export function VenueAvailabilityPanel({
                                 available ? "text-[#16A34A]" : "text-[#DC2626]"
                               }`}
                             >
-                              {available ? "Available" : "Booked"}
+                              {slot.status === "available"
+                                ? "Available"
+                                : slot.status === "completed"
+                                  ? "Completed"
+                                  : "Booked"}
                             </p>
+                            {!available && (slot.bookingRef || slot.customerName) ? (
+                              <div className="mt-1 space-y-0.5">
+                                {slot.bookingRef ? (
+                                  <p className="text-[11px] font-medium text-[#111827] truncate">
+                                    Booking {slot.bookingRef}
+                                  </p>
+                                ) : null}
+                                {slot.customerName ? (
+                                  <p className="text-[11px] text-[#4B5563] truncate">
+                                    {slot.customerName}
+                                    {slot.guests ? ` · ${slot.guests} guests` : ""}
+                                  </p>
+                                ) : null}
+                              </div>
+                            ) : null}
                           </button>
                         );
                       })}
+                    </div>
+                  )}
+                  {expandedFood.length > 0 && (
+                    <div className="space-y-2 pt-1">
+                      <p className="text-[12px] font-semibold text-[#6B7280]">Food</p>
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                        {expandedFood.map((slot) => {
+                          const available = slot.status === "available";
+                          const bookedId = [slot.bookingId, slot.bookingRef].find(isBookingUuid);
+                          return (
+                            <button
+                              key={`food-${slot.slotKey}`}
+                              type="button"
+                              disabled={!bookedId}
+                              onClick={() => {
+                                if (bookedId) onViewBooking({ bookingId: bookedId });
+                              }}
+                              className={`rounded-[10px] border px-3.5 py-3 text-left ${
+                                bookedId ? "hover:border-[#C89B3C] cursor-pointer" : "cursor-default"
+                              } ${available ? "border-[#E8EAF0] bg-white" : "border-[#E8EAF0] bg-[#F9FAFB]"}`}
+                            >
+                              <div className="flex items-center justify-between gap-2">
+                                <p className="text-sm font-semibold text-[#111827]">{slot.slotName}</p>
+                                <SlotStatusDot status={slot.status} />
+                              </div>
+                              <p
+                                className={`text-[11px] font-medium mt-1.5 ${
+                                  available ? "text-[#16A34A]" : "text-[#DC2626]"
+                                }`}
+                              >
+                                {available ? "Available" : "Booked"}
+                              </p>
+                              {!available && slot.customerName ? (
+                                <p className="text-[11px] text-[#4B5563] mt-1 truncate">
+                                  {slot.customerName}
+                                  {slot.guests ? ` · ${slot.guests} guests` : ""}
+                                </p>
+                              ) : null}
+                            </button>
+                          );
+                        })}
+                      </div>
                     </div>
                   )}
                 </div>
@@ -700,13 +914,16 @@ export function VenueAvailabilityPanel({
               focusDate={focusDate}
               onSelect={listSelectDate}
               onOpenDate={(date) => {
-                setFocusDate(date);
-                if (isSlotBased) {
+                void handleDayClick(date);
+              }}
+              onViewBooking={(date) => {
+                void (async () => {
+                  if (await openBookedDate(date, true)) return;
+                  setFocusDate(date);
                   setExpandedDate(date);
                   setViewMode("calendar");
-                }
+                })();
               }}
-              onViewBooking={onViewBooking}
             />
           )}
         </div>
@@ -721,38 +938,66 @@ export function VenueAvailabilityPanel({
           </p>
         </div>
         <div className="p-4 space-y-4">
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2.5">
             <Meta label="Selected Date" value={formatAvailabilityDate(focusDate)} />
             <Meta label="Venue" value={venue.name} />
-            <Meta label="Booking Type" value={isSlotBased ? "Slot Based" : "Full Day"} />
+            <Meta
+              label="Booking Type"
+              value={venue.bookingModel === "venue_food" ? "Venue + Food" : "Venue Only"}
+            />
+            <Meta label="Pricing Mode" value={isSlotBased ? "Slot Based" : "Full Day"} />
             <Meta label="Operating Hours" value={venue.operatingHours || "9 AM – 11 PM"} />
             <Meta
-              label="Status"
+              label="Booking Status"
               value={
                 focusSummary?.summaryLabel?.replace(/^✓\s*/, "") ||
                 displayLabelForTone(focusSummary?.statusTone || "available")
               }
             />
+            <Meta label="Booking Count" value={String(focusCovering.length)} />
+            <Meta
+              label="Guest Count"
+              value={String(focusCovering.reduce((sum, b) => sum + (b.guestCount || 0), 0) || "—")}
+            />
           </div>
 
           {isSlotBased ? (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
-              {focusSlots.map((slot) => (
-                <div
-                  key={slot.slotKey}
-                  className="rounded-[10px] border border-[#E8EAF0] px-3.5 py-3"
-                >
-                  <p className="text-sm font-semibold text-[#111827]">{slot.slotName}</p>
-                  <p className="text-[11px] text-[#9CA3AF] mt-0.5">{slot.timeLabel}</p>
-                  <p
-                    className={`text-[12px] font-medium mt-2 ${
-                      slot.status === "available" ? "text-[#16A34A]" : "text-[#DC2626]"
+              {focusSlots.map((slot) => {
+                const bookedId = [slot.bookingId, slot.bookingRef].find(isBookingUuid);
+                return (
+                  <button
+                    key={slot.slotKey}
+                    type="button"
+                    onClick={() => {
+                      if (bookedId) onViewBooking({ bookingId: bookedId });
+                    }}
+                    className={`rounded-[10px] border border-[#E8EAF0] px-3.5 py-3 text-left ${
+                      bookedId ? "hover:border-[#C89B3C] cursor-pointer" : ""
                     }`}
                   >
-                    {slot.status === "available" ? "Available" : "Booked"}
-                  </p>
-                </div>
-              ))}
+                    <p className="text-sm font-semibold text-[#111827]">{slot.slotName}</p>
+                    <p className="text-[11px] text-[#9CA3AF] mt-0.5">{slot.timeLabel}</p>
+                    <p
+                      className={`text-[12px] font-medium mt-2 ${
+                        slot.status === "available" ? "text-[#16A34A]" : "text-[#DC2626]"
+                      }`}
+                    >
+                      {slot.status === "available"
+                        ? "Available"
+                        : slot.status === "completed"
+                          ? "Completed"
+                          : "Booked"}
+                    </p>
+                    {slot.customerName ? (
+                      <p className="text-[11px] text-[#4B5563] mt-1 truncate">
+                        {slot.customerName}
+                        {slot.guests ? ` · ${slot.guests} guests` : ""}
+                      </p>
+                    ) : null}
+                  </button>
+                );
+              })}
             </div>
           ) : (
             <div className="rounded-[10px] border border-[#E8EAF0] px-3.5 py-3 max-w-sm">
@@ -774,27 +1019,66 @@ export function VenueAvailabilityPanel({
             </div>
           )}
 
-          {focusCovering.length === 1 &&
-            (focusSummary?.statusTone === "booked" ||
-              focusSummary?.statusTone === "completed") && (
-              <div className="flex flex-wrap items-center gap-2">
-                <p className="text-[12px] text-[#6B7280]">
-                  Booking {focusCovering[0].bookingId}
-                </p>
-                <button
-                  type="button"
-                  onClick={() =>
-                    onViewBooking({
-                      bookingRef: focusCovering[0].id,
-                      bookingId: focusCovering[0].bookingId,
-                    })
-                  }
-                  className="h-8 px-3 rounded-lg border border-[#E8EAF0] text-[12px] font-semibold text-[#374151] hover:border-[#C89B3C] hover:text-[#C89B3C]"
-                >
-                  View Booking
-                </button>
+          {(() => {
+            const dayRow = availability.find((row) => row.date === focusDate && !row.slotKey);
+            const availableSlots =
+              dayRow?.availableSlotNames?.length
+                ? dayRow.availableSlotNames.join(", ")
+                : focusSlots.filter((s) => s.status === "available").map((s) => s.slotName).join(", ") || "—";
+            const bookedSlots =
+              dayRow?.bookedSlotNames?.length
+                ? dayRow.bookedSlotNames.join(", ")
+                : focusCovering.flatMap((b) => b.selectedSlots || []).join(", ") || "—";
+            const availableFood = dayRow?.availableFoodSlots?.join(", ") || "—";
+            const bookedFood =
+              dayRow?.bookedFoodSlots?.length
+                ? dayRow.bookedFoodSlots.join(", ")
+                : focusCovering.flatMap((b) => b.selectedFoodSlots || []).join(", ") || "—";
+            return (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                <Meta label="Available Slots" value={availableSlots} />
+                <Meta label="Booked Slots" value={bookedSlots} />
+                <Meta label="Available Food Slots" value={availableFood} />
+                <Meta label="Booked Food Slots" value={bookedFood} />
               </div>
-            )}
+            );
+          })()}
+
+          {focusCovering.length > 0 && (
+            <div className="space-y-2">
+              <p className="text-[12px] font-semibold text-[#6B7280]">
+                {focusCovering.length === 1 ? "Booking" : `${focusCovering.length} Bookings`}
+              </p>
+              {focusCovering.map((booking) => (
+                <div
+                  key={booking.id}
+                  className="rounded-[10px] border border-[#E8EAF0] px-3.5 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3"
+                >
+                  <div className="min-w-0 space-y-1">
+                    <p className="text-sm font-semibold text-[#111827]">
+                      {booking.bookingId}
+                      {booking.customerName ? ` · ${booking.customerName}` : ""}
+                    </p>
+                    <p className="text-[12px] text-[#6B7280]">
+                      Guests {booking.guestCount || 0}
+                      {booking.selectedSlots?.length ? ` · ${booking.selectedSlots.join(", ")}` : booking.slot ? ` · ${booking.slot}` : ""}
+                      {booking.selectedFoodSlots?.length ? ` · Food: ${booking.selectedFoodSlots.join(", ")}` : ""}
+                    </p>
+                    <p className="text-[11px] text-[#9CA3AF]">
+                      {booking.bookingStatus} · {booking.paymentStatus || "pending"}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => onViewBooking({ bookingId: booking.id })}
+                    className="h-8 px-3 rounded-lg border border-[#E8EAF0] text-[12px] font-semibold text-[#374151] hover:border-[#C89B3C] hover:text-[#C89B3C] shrink-0"
+                  >
+                    View Booking
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </section>
 
@@ -861,6 +1145,12 @@ function DateListView({
     summary: DaySummary;
     booking: LiveBookingLite | null;
     timeLabel: string;
+    bookingCount: number;
+    bookedSlots: string;
+    availableSlots: string;
+    bookedFood: string;
+    availableFood: string;
+    guestCount: number;
   }>;
   today: string;
   isSlotBased: boolean;
@@ -868,14 +1158,24 @@ function DateListView({
   focusDate: string;
   onSelect: (date: string) => void;
   onOpenDate: (date: string) => void;
-  onViewBooking: (row: { bookingRef?: string; bookingId?: string }) => void;
+  onViewBooking: (date: string) => void;
 }) {
   return (
     <div className="overflow-x-auto rounded-[12px] border border-[#E8EAF0]">
-      <table className="w-full min-w-[640px] text-sm">
+      <table className="w-full min-w-[960px] text-sm">
         <thead>
           <tr className="bg-[#F8F9FB] text-left text-[11px] uppercase tracking-wide text-[#9CA3AF]">
-            {["Date", "Status", "Booking", "Time", "Action"].map((h) => (
+            {[
+              "Date",
+              "Status",
+              "Booked Slots",
+              "Available Slots",
+              "Booked Food Slots",
+              "Available Food Slots",
+              "Bookings Count",
+              "Guests",
+              "Action",
+            ].map((h) => (
               <th key={h} className="px-3 py-2.5 font-semibold whitespace-nowrap">
                 {h}
               </th>
@@ -885,7 +1185,7 @@ function DateListView({
         <tbody>
           {rows.length === 0 ? (
             <tr>
-              <td colSpan={5} className="py-10 text-center text-sm text-[#6B7280]">
+              <td colSpan={9} className="py-10 text-center text-sm text-[#6B7280]">
                 No dates match this filter.
               </td>
             </tr>
@@ -894,9 +1194,10 @@ function DateListView({
               const tone = row.summary.statusTone;
               const canBook = isDateBookable(tone, row.date, today);
               const isChecked = checkedDates.includes(row.date);
+              const bookingCount = row.bookingCount || row.summary.coveringBookings.length;
               const hasBooking =
-                row.summary.coveringBookings.length > 0 &&
-                (tone === "booked" || tone === "completed");
+                bookingCount > 0 &&
+                (tone === "booked" || tone === "completed" || tone === "partial");
               return (
                 <tr
                   key={row.date}
@@ -920,25 +1221,32 @@ function DateListView({
                   <td className="px-3 py-0">
                     <StatusTonePill tone={tone} label={shortStatusLabel(tone)} />
                   </td>
-                  <td className="px-3 py-0 text-[#4B5563] whitespace-nowrap">
-                    {hasBooking ? row.booking?.bookingId || "—" : "—"}
+                  <td className="px-3 py-0 text-[#4B5563] max-w-[140px] truncate">
+                    {row.bookedSlots && row.bookedSlots !== "—" ? row.bookedSlots : "—"}
                   </td>
-                  <td className="px-3 py-0 text-[#4B5563] max-w-[220px] truncate">
-                    {row.timeLabel}
+                  <td className="px-3 py-0 text-[#4B5563] max-w-[140px] truncate">
+                    {row.availableSlots && row.availableSlots !== "—" ? row.availableSlots : "—"}
+                  </td>
+                  <td className="px-3 py-0 text-[#4B5563] max-w-[140px] truncate">
+                    {row.bookedFood && row.bookedFood !== "—" ? row.bookedFood : "—"}
+                  </td>
+                  <td className="px-3 py-0 text-[#4B5563] max-w-[140px] truncate">
+                    {row.availableFood && row.availableFood !== "—" ? row.availableFood : "—"}
+                  </td>
+                  <td className="px-3 py-0 text-[#4B5563] whitespace-nowrap">
+                    {bookingCount || "—"}
+                  </td>
+                  <td className="px-3 py-0 text-[#4B5563] whitespace-nowrap">
+                    {hasBooking ? row.guestCount || "—" : "—"}
                   </td>
                   <td className="px-3 py-0">
-                    {hasBooking && row.booking ? (
+                    {hasBooking ? (
                       <button
                         type="button"
-                        onClick={() =>
-                          onViewBooking({
-                            bookingRef: row.booking!.id,
-                            bookingId: row.booking!.bookingId,
-                          })
-                        }
+                        onClick={() => onViewBooking(row.date)}
                         className="h-8 px-3 rounded-lg border border-[#E8EAF0] text-[11px] font-semibold text-[#374151] hover:border-[#C89B3C] hover:text-[#C89B3C]"
                       >
-                        View
+                        {bookingCount > 1 ? `View ${bookingCount} Bookings` : "View Booking"}
                       </button>
                     ) : canBook ? (
                       <button
@@ -977,7 +1285,9 @@ function SlotStatusDot({ status }: { status: DayAvailabilityStatus }) {
       ? "bg-[#16A34A]"
       : status === "booked"
         ? "bg-[#DC2626]"
-        : "bg-[#9CA3AF]";
+        : status === "completed"
+          ? "bg-[#2563EB]"
+          : "bg-[#9CA3AF]";
   return <span className={`w-2 h-2 rounded-full shrink-0 ${color}`} />;
 }
 
@@ -985,6 +1295,7 @@ function StatusTonePill({ tone, label }: { tone: CalendarDayTone; label: string 
   const map: Record<string, string> = {
     available: "bg-[#ECFDF3] text-[#16A34A] border-[#D3F8E1]",
     booked: "bg-[#FEF2F2] text-[#DC2626] border-[#FECACA]",
+    partial: "bg-[#FFFBEB] text-[#D97706] border-[#FDE68A]",
     completed: "bg-[#EFF6FF] text-[#2563EB] border-[#BFDBFE]",
     no_booking: "bg-[#F9FAFB] text-[#9CA3AF] border-[#E5E7EB]",
     blocked: "bg-[#F3F4F6] text-[#6B7280] border-[#E5E7EB]",
@@ -1021,7 +1332,7 @@ function shortStatusLabel(tone: CalendarDayTone) {
     case "holiday":
       return "Holiday";
     case "partial":
-      return "Partial";
+      return "Partially Booked";
     default:
       return "Available";
   }
@@ -1058,6 +1369,8 @@ function summaryTextClass(tone: CalendarDayTone) {
       return "text-[#6B7280]";
     case "holiday":
       return "text-[#7C3AED]";
+    case "partial":
+      return "text-[#D97706]";
     default:
       return "text-[#15803D]";
   }

@@ -4,10 +4,6 @@ from datetime import date, timedelta
 import pytest
 from httpx import AsyncClient
 
-from app.db.session import AsyncSessionLocal
-from app.schemas.availability import BookingHoldRequest
-from app.services.availability_service import AvailabilityService
-
 AUTH_BASE = "/api/v1/auth"
 BP_BASE = "/api/v1/business-profiles"
 VENUES_BASE = "/api/v1/venues"
@@ -211,74 +207,101 @@ async def test_manual_block_and_unblock(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_booking_reserve_cancel_and_complete(client: AsyncClient):
+async def test_booking_overlay_partial_cancel_and_complete(client: AsyncClient):
     token = await _login(client, "admin@velvetvenues.com", "Admin@123")
     venue_id = await _create_venue(client, token)
     await _set_pricing(client, token, venue_id, "slot_based")
-    event_date = _future_date(12)
-    booking_id = uuid.uuid4()
+    event_date = _future_date(12).isoformat()
 
-    async with AsyncSessionLocal() as db:
-        service = AvailabilityService(db)
-        await service.reserve(
-            None,
-            uuid.UUID(venue_id),
-            BookingHoldRequest(
-                event_date=event_date,
-                slot_key="morning",
-                booking_id=booking_id,
-                booking_ref="BK-TEST-1",
-                customer_name="Asha Rao",
-                event_type="Wedding",
-                guests=120,
-            ),
-        )
+    customer = await client.post(
+        "/api/v1/customers",
+        headers=_auth(token),
+        json={
+            "name": "Asha Rao",
+            "email": f"asha_{uuid.uuid4().hex[:8]}@example.com",
+            "mobile": f"+9198{uuid.uuid4().int % 10_000_000:07d}",
+            "city": "Hyderabad",
+        },
+    )
+    assert customer.status_code in (200, 201), customer.text
+    customer_id = customer.json()["customer"]["id"]
+
+    created = await client.post(
+        "/api/v1/bookings",
+        headers=_auth(token),
+        json={
+            "venue_id": venue_id,
+            "customer_id": customer_id,
+            "event_date": event_date,
+            "booking_mode": "slot_based",
+            "event_type": "Wedding",
+            "guest_count": 120,
+            "slot_keys": ["morning"],
+        },
+    )
+    assert created.status_code == 201, created.text
+    booking = created.json()["booking"]
+    booking_id = booking["id"]
 
     day = await client.get(
-        f"{VENUES_BASE}/{venue_id}/availability/{event_date.isoformat()}",
+        f"{VENUES_BASE}/{venue_id}/availability/{event_date}",
         headers=_auth(token),
     )
     assert day.status_code == 200, day.text
     payload = day.json()
-    assert payload["day"]["status"] in {"booked", "partially_booked"}
+    assert payload["day"]["status"] == "partially_booked"
     morning = next(s for s in payload["day"]["slots"] if s["slot_key"] == "morning")
     afternoon = next(s for s in payload["day"]["slots"] if s["slot_key"] == "afternoon")
     assert morning["status"] == "booked"
+    assert morning["booking_id"] == booking_id
     assert morning["customer_name"] == "Asha Rao"
     assert afternoon["status"] == "available"
+    assert payload["bookings"]
+    assert payload["bookings"][0]["booking_id"] == booking_id
+    assert "Morning" in payload["day"]["booked_slot_names"]
 
-    async with AsyncSessionLocal() as db:
-        service = AvailabilityService(db)
-        await service.release(booking_id)
+    cancelled = await client.delete(f"/api/v1/bookings/{booking_id}", headers=_auth(token))
+    assert cancelled.status_code == 200, cancelled.text
 
     restored = await client.get(
-        f"{VENUES_BASE}/{venue_id}/availability/{event_date.isoformat()}",
+        f"{VENUES_BASE}/{venue_id}/availability/{event_date}",
         headers=_auth(token),
     )
     morning = next(s for s in restored.json()["day"]["slots"] if s["slot_key"] == "morning")
     assert morning["status"] == "available"
+    assert restored.json()["day"]["status"] == "available"
+    assert restored.json()["day"]["booking_count"] == 0
 
-    booking_two = uuid.uuid4()
-    async with AsyncSessionLocal() as db:
-        service = AvailabilityService(db)
-        await service.reserve(
-            None,
-            uuid.UUID(venue_id),
-            BookingHoldRequest(
-                event_date=event_date,
-                slot_key="afternoon",
-                booking_id=booking_two,
-                customer_name="Guest",
-            ),
-        )
-        await service.complete(booking_two)
+    second = await client.post(
+        "/api/v1/bookings",
+        headers=_auth(token),
+        json={
+            "venue_id": venue_id,
+            "customer_id": customer_id,
+            "event_date": event_date,
+            "booking_mode": "slot_based",
+            "guest_count": 40,
+            "slot_keys": ["morning", "afternoon"],
+        },
+    )
+    assert second.status_code == 201, second.text
+    second_id = second.json()["booking"]["id"]
+    updated = await client.put(
+        f"/api/v1/bookings/{second_id}",
+        headers=_auth(token),
+        json={"booking_status": "completed"},
+    )
+    assert updated.status_code == 200, updated.text
 
     completed = await client.get(
-        f"{VENUES_BASE}/{venue_id}/availability/{event_date.isoformat()}",
+        f"{VENUES_BASE}/{venue_id}/availability/{event_date}",
         headers=_auth(token),
     )
     afternoon = next(s for s in completed.json()["day"]["slots"] if s["slot_key"] == "afternoon")
+    morning_done = next(s for s in completed.json()["day"]["slots"] if s["slot_key"] == "morning")
     assert afternoon["status"] == "completed"
+    assert morning_done["status"] == "completed"
+    assert completed.json()["day"]["status"] == "completed"
 
 
 @pytest.mark.asyncio

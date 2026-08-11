@@ -26,6 +26,35 @@ def test_full_day_matches_frontend_preview():
     assert summary.remaining_balance == Decimal("44250")
 
 
+def test_amount_received_recalculates_commission_and_balance():
+    summary = BookingCalculationService(Decimal("2")).calculate_booking_summary(
+        venue_price=Decimal("100000"),
+        gst_percent=Decimal("18"),
+        advance_percent=Decimal("25"),
+        amount_received=Decimal("50000"),
+    )
+    assert summary.booking_total == Decimal("118000")
+    assert summary.advance_payable == Decimal("29500")
+    assert summary.amount_received == Decimal("50000")
+    assert summary.platform_commission == Decimal("1000")
+    assert summary.vendor_receivable == Decimal("49000")
+    assert summary.remaining_balance == Decimal("68000")
+    assert summary.payment_status == "partial"
+
+
+def test_zero_received_is_pending():
+    summary = BookingCalculationService().calculate_booking_summary(
+        venue_price=Decimal("10000"),
+        gst_percent=Decimal("0"),
+        advance_percent=Decimal("25"),
+        amount_received=Decimal("0"),
+    )
+    assert summary.amount_received == Decimal("0")
+    assert summary.platform_commission == Decimal("0")
+    assert summary.remaining_balance == Decimal("10000")
+    assert summary.payment_status == "pending"
+
+
 def test_food_calculation():
     summary = BookingCalculationService().calculate_food(
         Decimal("650"),

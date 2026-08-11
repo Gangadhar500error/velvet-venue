@@ -164,7 +164,13 @@ async def test_create_booking_updates_availability(client: AsyncClient):
         f"{VENUES_BASE}/{venue_id}/availability/{event_date}", headers=_auth(token)
     )
     assert day.status_code == 200
-    assert day.json()["day"]["status"] in {"booked", "partially_booked"}
+    payload = day.json()["day"]
+    assert payload["status"] in {"booked", "partially_booked"}
+    assert booking["id"] in [str(item) for item in payload["booking_ids"]]
+    assert payload["booking_count"] >= 1
+    assert payload["bookings"]
+    assert payload["bookings"][0]["booking_id"] == booking["id"]
+    assert payload["booked_slot_names"]
 
     listed = await client.get(BOOKINGS_BASE, headers=_auth(token))
     assert listed.status_code == 200

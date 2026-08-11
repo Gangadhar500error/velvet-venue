@@ -17,7 +17,7 @@ BookingStatusLiteral = Literal[
     "refunded",
     "rejected",
 ]
-PaymentStatusLiteral = Literal["pending", "partial", "paid", "refunded", "failed"]
+PaymentStatusLiteral = Literal["pending", "partial", "paid", "refunded", "failed", "cancelled"]
 ApprovalLiteral = Literal["pending", "approved", "rejected"]
 SortByLiteral = Literal["created_at", "event_date", "booking_number", "total_amount"]
 SortDirLiteral = Literal["asc", "desc"]
@@ -34,6 +34,17 @@ class ServiceSelectionInput(BaseModel):
     name: str
     price: Decimal = Decimal("0")
     quantity: int = Field(default=1, ge=1)
+
+
+class DateSlotInput(BaseModel):
+    event_date: date
+    slot_keys: list[str] = Field(default_factory=list)
+    slot_ids: list[uuid.UUID] = Field(default_factory=list)
+
+    @field_validator("slot_keys")
+    @classmethod
+    def clean_date_keys(cls, value: list[str]) -> list[str]:
+        return [item.strip() for item in value if item and item.strip()]
 
 
 class BookingCreateRequest(BaseModel):
@@ -56,6 +67,8 @@ class BookingCreateRequest(BaseModel):
     assigned_executive: str | None = None
     payment_method: str | None = None
     notes: str | None = None
+    amount_received: Decimal | None = Field(default=None, ge=0)
+    date_slots: list[DateSlotInput] = Field(default_factory=list)
 
     @field_validator("slot_keys")
     @classmethod
@@ -97,6 +110,11 @@ class BookingQuoteResponse(BaseModel):
     vendor_amount: float = 0
     gst_percent: float = 0
     advance_percent: float = 0
+    platform_commission_percent: float = 0
+    amount_received: float = 0
+    suggested_advance: float = 0
+    payment_status: str = "pending"
+    gst_mode: str = "excluded"
     currency: str = "INR"
 
 
@@ -259,6 +277,7 @@ class PaymentSummary(BaseModel):
     gst_percent: float = 0
     gst_mode: str = "excluded"
     payment_status: str = "pending"
+    platform_commission_percent: float = 0
 
 
 class BookingListItem(BaseModel):

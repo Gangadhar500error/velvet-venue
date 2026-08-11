@@ -27,6 +27,19 @@ BlockReasonLiteral = Literal[
 RecurrenceLiteral = Literal["none", "weekly", "monthly", "yearly"]
 
 
+class AvailabilityDayBooking(BaseModel):
+    booking_id: uuid.UUID
+    booking_number: str
+    customer_name: str = ""
+    guest_count: int = 0
+    selected_slots: list[str] = Field(default_factory=list)
+    selected_food_slots: list[str] = Field(default_factory=list)
+    payment_status: str = "pending"
+    booking_status: str
+    event_type: str | None = None
+    total_amount: float = 0
+
+
 class SlotAvailabilityResponse(BaseModel):
     id: uuid.UUID
     slot_id: uuid.UUID | None = None
@@ -59,6 +72,13 @@ class DayAvailabilityResponse(BaseModel):
     notes: str | None = None
     is_manual_override: bool = False
     slots: list[SlotAvailabilityResponse] = Field(default_factory=list)
+    booking_ids: list[uuid.UUID] = Field(default_factory=list)
+    booked_slot_names: list[str] = Field(default_factory=list)
+    available_slot_names: list[str] = Field(default_factory=list)
+    booked_food_slots: list[str] = Field(default_factory=list)
+    available_food_slots: list[str] = Field(default_factory=list)
+    guest_count: int = 0
+    bookings: list[AvailabilityDayBooking] = Field(default_factory=list)
 
 
 class AvailabilityDashboard(BaseModel):
@@ -104,6 +124,7 @@ class AvailabilityDayDetailResponse(BaseModel):
     day: DayAvailabilityResponse
     occupancy: int = 0
     vendor_notes: str | None = None
+    bookings: list[AvailabilityDayBooking] = Field(default_factory=list)
 
 
 class BlockCreateRequest(BaseModel):

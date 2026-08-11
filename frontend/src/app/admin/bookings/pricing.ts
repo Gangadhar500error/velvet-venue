@@ -2,7 +2,7 @@ import type { Venue, PricingSlot, DayAvailabilityStatus, VenueAddon } from "../v
 import type { BookingFormValues, BookingAddon, BookingMealLine } from "./types";
 import { PLATFORM_COMMISSION_PERCENT } from "../venues/data";
 
-export type AvailabilityBadge = "available" | "booked" | "blocked" | "unknown";
+export type AvailabilityBadge = "available" | "booked" | "blocked" | "unknown" | "partial";
 
 export const TIMED_SLOT_ORDER = ["morning", "afternoon", "evening", "night"] as const;
 
@@ -276,11 +276,21 @@ export function getFoodMealAvailability(
 
   let worst: AvailabilityBadge = "available";
   for (const date of dates) {
-    const row = venue.availability?.find(
-      (a) => a.date === date && normalizeSlotKey(a.slot) === key
+    const row =
+      venue.availability?.find(
+        (a) =>
+          a.date === date &&
+          a.slotKind === "food" &&
+          normalizeSlotKey(a.slotKey || a.slot) === key
+      ) ||
+      venue.availability?.find(
+        (a) => a.date === date && normalizeSlotKey(a.slotKey || a.slot) === key
+      );
+    const day = venue.availability?.find((a) => a.date === date && !a.slotKey);
+    const bookedByName = (day?.bookedFoodSlots || []).some(
+      (name) => normalizeSlotKey(name) === key
     );
-    if (!row) continue;
-    if (row.status === "booked") {
+    if ((row?.status === "booked" || bookedByName) && row) {
       const own =
         (options?.excludeBookingId &&
           (row.bookingId === options.excludeBookingId ||
@@ -289,17 +299,95 @@ export function getFoodMealAvailability(
           (row.bookingRef === options.excludeBookingRef ||
             row.bookingId === options.excludeBookingRef));
       if (!own) return "booked";
-      continue;
+    } else if (row?.status === "booked" || bookedByName) {
+      return "booked";
     }
     if (
-      row.status === "blocked" ||
-      row.status === "holiday" ||
-      row.status === "maintenance"
+      row?.status === "blocked" ||
+      row?.status === "holiday" ||
+      row?.status === "maintenance"
     ) {
       worst = "blocked";
     }
   }
   return worst;
+}
+
+export function getDaySlotAvailability(
+  venue: Venue | undefined,
+  date: string,
+  options?: {
+    bookingType?: "venue_only" | "venue_food";
+    pricingMethod?: "full_day" | "slot_based";
+    excludeBookingId?: string;
+    excludeBookingRef?: string;
+  }
+): AvailabilityBadge {
+  if (!venue || !date) return "unknown";
+  const day = venue.availability?.find((row) => row.date === date && !row.slotKey);
+  if (day?.status === "blocked" || day?.status === "holiday" || day?.status === "maintenance") {
+    return "blocked";
+  }
+
+  if (options?.bookingType === "venue_food") {
+    const meals = (venue.foodSlots || []).filter((slot) => slot.enabled !== false);
+    if (meals.length === 0) {
+      return day?.status === "partially_booked"
+        ? "partial"
+        : day?.status === "booked" || day?.status === "completed"
+          ? "booked"
+          : "available";
+    }
+    const statuses = meals.map((meal) =>
+      getFoodMealAvailability(venue, [date], meal.key, options)
+    );
+    if (statuses.every((status) => status === "booked" || status === "blocked")) {
+      return statuses.includes("booked") ? "booked" : "blocked";
+    }
+    if (statuses.some((status) => status === "booked")) return "partial";
+    if (statuses.some((status) => status === "blocked")) return "blocked";
+    return "available";
+  }
+
+  if (options?.pricingMethod === "full_day" || options?.pricingMethod !== "slot_based") {
+    if (day?.status === "partially_booked") return "booked";
+    return getVenueOnlySlotAvailability(venue, [date], "full_day", options);
+  }
+
+  if (day?.status === "partially_booked") return "partial";
+  if (day?.status === "booked" || day?.status === "completed") return "booked";
+
+  const slots = (venue.pricingSlots || []).filter(
+    (slot) => slot.enabled !== false && slot.key !== "full_day"
+  );
+  if (slots.length === 0) {
+    return getVenueOnlySlotAvailability(venue, [date], "full_day", options);
+  }
+  const statuses = slots.map((slot) =>
+    getVenueOnlySlotAvailability(venue, [date], slot.key, options)
+  );
+  if (statuses.every((status) => status === "booked" || status === "blocked")) {
+    return statuses.includes("booked") ? "booked" : "blocked";
+  }
+  if (statuses.some((status) => status === "booked")) return "partial";
+  if (statuses.some((status) => status === "blocked")) return "blocked";
+  return "available";
+}
+
+export function parseDateSlotsJson(raw?: string): Record<string, string[]> {
+  if (!raw?.trim()) return {};
+  try {
+    const parsed = JSON.parse(raw) as Record<string, string[]>;
+    if (!parsed || typeof parsed !== "object") return {};
+    return Object.fromEntries(
+      Object.entries(parsed).map(([date, keys]) => [
+        date,
+        (keys || []).map((key) => normalizeSlotKey(key)).filter(Boolean),
+      ])
+    );
+  } catch {
+    return {};
+  }
 }
 
 export function findPricingSlot(
@@ -976,7 +1064,8 @@ export function buildVenueFormPatch(
 }
 
 export function availabilityLabel(status: AvailabilityBadge | DayAvailabilityStatus): string {
-  if (status === "booked") return "Already Booked";
+  if (status === "booked" || status === "completed") return "Already Booked";
+  if (status === "partial" || status === "partially_booked") return "Partially Booked";
   if (status === "blocked" || status === "holiday" || status === "maintenance") return "Blocked";
   if (status === "available") return "Available";
   return "Checking…";

@@ -68,7 +68,7 @@ import {
 import { EntityViewLayout } from "../../_components/layout/EntityViewLayout";
 import { fetchBusinessProfiles, mapBusinessProfileListItem } from "@/lib/business-profiles";
 import { fetchVenueMeta } from "@/lib/venues";
-import { fetchAvailabilityWindow } from "@/lib/availability";
+import { fetchAvailabilityWindow, isBookingUuid } from "@/lib/availability";
 import type { Booking } from "../../bookings/types";
 import type { AmenityOption } from "../data";
 
@@ -323,30 +323,25 @@ export function VenueWorkspace({
   const [videoUrl, setVideoUrl] = useState(venue.videoUrl || "");
   const coverInputRef = useRef<HTMLInputElement>(null);
 
-  const [availability, setAvailability] = useState<AvailabilityDay[]>(() => [...(venue.availability || [])]);
-  const availabilityLoadedFor = useRef<string | null>(null);
+  const [availability, setAvailability] = useState<AvailabilityDay[]>([]);
 
   useEffect(() => {
     setCoverImageState(venue.coverImage || "");
     setGalleryImagesState([...(venue.galleryImages || [])]);
     setImages360([...(venue.images360 || [])]);
     setVideoUrl(venue.videoUrl || "");
-    setAvailability([...(venue.availability || [])]);
-    availabilityLoadedFor.current = null;
+    setAvailability([]);
   }, [venue.id]);
 
   useEffect(() => {
     if (tab !== "availability" || mode === "create" || !venue.id) return;
-    if (availabilityLoadedFor.current === venue.id) return;
     let cancelled = false;
     (async () => {
       try {
         const { days } = await fetchAvailabilityWindow(venue.id, venue.maxAdvanceBookingDays || 180);
-        if (cancelled) return;
-        availabilityLoadedFor.current = venue.id;
-        setAvailability(days);
+        if (!cancelled) setAvailability(days);
       } catch {
-        if (!cancelled) setAvailability([...(venue.availability || [])]);
+        if (!cancelled) setAvailability([]);
       }
     })();
     return () => {
@@ -479,6 +474,7 @@ export function VenueWorkspace({
     dates?: string[];
     slot: string;
     slots?: string[];
+    dateSlots?: Array<{ date: string; slotKey: string; slotName: string }>;
     status: DayAvailabilityStatus;
     eventEndDate?: string;
     amount?: number;
@@ -505,6 +501,12 @@ export function VenueWorkspace({
       params.set("eventEndDate", payload.eventEndDate);
     }
     if (payload.slots?.length) params.set("slots", payload.slots.join("|"));
+    if (payload.dateSlots?.length) {
+      params.set(
+        "dateSlots",
+        payload.dateSlots.map((item) => `${item.date}:${item.slotKey}`).join(";")
+      );
+    }
     if (venue.ownerId) params.set("ownerId", venue.ownerId);
     if (venue.ownerName) params.set("ownerName", venue.ownerName);
     if (venue.operatingHours) params.set("hours", venue.operatingHours);
@@ -513,7 +515,7 @@ export function VenueWorkspace({
   };
 
   const openBookingFromRow = (row: { bookingRef?: string; bookingId?: string }) => {
-    const target = row.bookingRef || row.bookingId;
+    const target = [row.bookingId, row.bookingRef].find(isBookingUuid);
     if (!target) return;
     router.push(`/admin/bookings/${target}`);
   };

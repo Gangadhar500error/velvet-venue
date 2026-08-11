@@ -36,6 +36,7 @@ export interface SlotDetailRow {
   slotName: string;
   timeLabel: string;
   status: DayAvailabilityStatus;
+  kind?: "venue" | "food";
   bookingId?: string;
   bookingRef?: string;
   customerName?: string;
@@ -65,6 +66,8 @@ export interface LiveBookingLite {
   bookingAmount?: number;
   startTime?: string;
   endTime?: string;
+  selectedSlots?: string[];
+  selectedFoodSlots?: string[];
 }
 
 export interface DaySummary {
@@ -84,6 +87,13 @@ export interface DaySummary {
   coveringBookings: LiveBookingLite[];
   /** Maintenance / Admin Block / Holiday label when blocked */
   blockedReason?: string;
+}
+
+function isUuid(value?: string | null): value is string {
+  return Boolean(
+    value &&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
+  );
 }
 
 export function pricingMethodLabel(method?: PricingMethod | string) {
@@ -200,7 +210,10 @@ export function bookingsForDate(liveBookings: LiveBookingLite[], date: string) {
 }
 
 function availabilityRowForDate(availability: AvailabilityDay[], date: string) {
-  return availability.find((a) => a.date === date);
+  return (
+    availability.find((a) => a.date === date && !a.slotKey) ||
+    availability.find((a) => a.date === date)
+  );
 }
 
 /** Resolve calendar/list display status from bookings, availability, and date. */
@@ -251,7 +264,7 @@ export function displayLabelForTone(tone: CalendarDayTone): string {
 
 export function isDateBookable(tone: CalendarDayTone, date: string, today?: string) {
   const t = today ?? toYmd(new Date());
-  return tone === "available" && date >= t;
+  return (tone === "available" || tone === "partial") && date >= t;
 }
 
 export function blockedReasonLabel(row?: AvailabilityDay): string | undefined {
@@ -278,25 +291,32 @@ export function resolveSlotsForDate(args: {
   const displayTone = resolveDayDisplayTone({ date, coveringBookings: covering, availability, today });
   const availRow = availabilityRowForDate(availability, date);
 
-  const rowsForDate = availability.filter((a) => a.date === date);
+  const rowsForDate = availability.filter(
+    (a) => a.date === date && a.slotKind !== "food"
+  );
 
   return slots.map((slot) => {
-    const availSlot =
-      rowsForDate.find(
-        (row) =>
-          (row.slotKey && row.slotKey === slot.key) ||
-          normalizeVenueSlotKey(row.slot) === slot.key
-      ) || availRow;
-    const activeBooking =
-      covering.find(
-        (b) =>
-          normalizeVenueSlotKey(b.slot) === slot.key ||
-          method === "full_day" ||
-          normalizeVenueSlotKey(b.slot) === "full_day"
-      ) || covering[0];
+    const availSlot = rowsForDate.find(
+      (row) =>
+        (row.slotKey && row.slotKey === slot.key) ||
+        normalizeVenueSlotKey(row.slot) === slot.key
+    );
+    const activeBooking = covering.find((b) => {
+      const selected = (b.selectedSlots || [])
+        .map((name) => normalizeVenueSlotKey(name))
+        .filter(Boolean);
+      if (selected.length) {
+        return selected.includes(slot.key) || selected.includes("full_day");
+      }
+      const fromLabel = normalizeVenueSlotKey(b.slot);
+      if (method === "full_day" || fromLabel === "full_day") return true;
+      return fromLabel === slot.key;
+    });
 
     let status: DayAvailabilityStatus = "available";
-    if (activeBooking || availSlot?.status === "booked" || availSlot?.status === "completed") {
+    if (availSlot?.status === "completed" || activeBooking?.bookingStatus === "completed") {
+      status = "completed";
+    } else if (activeBooking || availSlot?.status === "booked") {
       status = "booked";
     } else if (availSlot?.status === "holiday" || availRow?.status === "holiday") {
       status = "holiday";
@@ -326,8 +346,12 @@ export function resolveSlotsForDate(args: {
       slotName: method === "full_day" ? "Full Day" : slot.name,
       timeLabel: slot.timeLabel,
       status,
-      bookingId: activeBooking?.bookingId || availSlot?.bookingId,
-      bookingRef: activeBooking?.id || availSlot?.bookingRef,
+      kind: "venue" as const,
+      bookingId:
+        activeBooking?.id ||
+        (isUuid(availSlot?.bookingRef) ? availSlot.bookingRef : undefined) ||
+        (isUuid(availSlot?.bookingId) ? availSlot.bookingId : undefined),
+      bookingRef: activeBooking?.bookingId || availSlot?.bookingId,
       customerName: activeBooking?.customerName || availSlot?.customerName,
       eventType: activeBooking?.eventType || availSlot?.eventType,
       guests: activeBooking?.guestCount || availSlot?.guests,
@@ -342,6 +366,61 @@ export function resolveSlotsForDate(args: {
   });
 }
 
+export function resolveFoodSlotsForDate(args: {
+  venue: Venue;
+  date: string;
+  availability: AvailabilityDay[];
+  liveBookings?: LiveBookingLite[];
+}): SlotDetailRow[] {
+  const { venue, date, availability, liveBookings = [] } = args;
+  const meals = (venue.foodSlots || []).filter((slot) => slot.enabled !== false);
+  if (meals.length === 0) return [];
+  const covering = bookingsForDate(liveBookings, date);
+  const dayRow = availabilityRowForDate(availability, date);
+  const foodRows = availability.filter(
+    (row) => row.date === date && (row.slotKind === "food" || Boolean(row.slotKey))
+  );
+
+  return meals.map((meal) => {
+    const key = normalizeVenueSlotKey(meal.key || meal.name);
+    const availSlot = foodRows.find(
+      (row) =>
+        row.slotKind === "food" &&
+        (row.slotKey === meal.key || normalizeVenueSlotKey(row.slot) === key)
+    );
+    const bookedByName = (dayRow?.bookedFoodSlots || []).some(
+      (name) => normalizeVenueSlotKey(name) === key
+    );
+    const activeBooking = covering.find((booking) =>
+      (booking.selectedFoodSlots || []).some(
+        (name) => normalizeVenueSlotKey(name) === key || name === meal.name
+      )
+    );
+    let status: DayAvailabilityStatus = "available";
+    if (availSlot?.status === "completed") status = "completed";
+    else if (activeBooking || availSlot?.status === "booked" || bookedByName) status = "booked";
+    else if (availSlot?.status === "blocked" || dayRow?.status === "blocked") status = "blocked";
+    else if (availSlot?.status === "holiday" || dayRow?.status === "holiday") status = "holiday";
+
+    return {
+      date,
+      slotKey: meal.key,
+      slotName: meal.name,
+      timeLabel: meal.timeLabel,
+      status,
+      kind: "food" as const,
+      bookingId:
+        activeBooking?.id ||
+        (isUuid(availSlot?.bookingRef) ? availSlot.bookingRef : undefined) ||
+        (isUuid(availSlot?.bookingId) ? availSlot.bookingId : undefined),
+      bookingRef: activeBooking?.bookingId || availSlot?.bookingId,
+      customerName: activeBooking?.customerName || availSlot?.customerName,
+      guests: activeBooking?.guestCount || availSlot?.guests,
+      bookingStatus: activeBooking?.bookingStatus,
+    };
+  });
+}
+
 export function getDaySummary(args: {
   date: string;
   venue: Venue;
@@ -352,7 +431,31 @@ export function getDaySummary(args: {
   const { date, venue, availability, selectedDate, liveBookings = [] } = args;
   const method = normalizePricingMethod(venue.pricingMethod);
 
-  const coveringBookings = bookingsForDate(liveBookings, date);
+  const coveringBookings = (() => {
+    const fromLive = bookingsForDate(liveBookings, date);
+    const dayRow = availability.find((row) => row.date === date && !row.slotKey);
+    const extras = (dayRow?.bookings || []).map((booking) => ({
+      id: booking.id,
+      bookingId: booking.bookingId,
+      customerName: booking.customerName,
+      eventType: booking.eventType || "Event",
+      eventDate: date,
+      eventEndDate: date,
+      selectedDates: date,
+      guestCount: booking.guestCount,
+      slot: (booking.selectedSlots || []).join(", ") || "Full Day",
+      bookingStatus: booking.bookingStatus,
+      paymentStatus: booking.paymentStatus,
+      bookingAmount: booking.bookingAmount,
+      selectedSlots: booking.selectedSlots,
+      selectedFoodSlots: booking.selectedFoodSlots,
+    }));
+    const byId = new Map<string, LiveBookingLite>();
+    [...fromLive, ...extras].forEach((booking) => {
+      if (booking.id) byId.set(booking.id, booking);
+    });
+    return Array.from(byId.values());
+  })();
   const multiCovering = coveringBookings.filter((b) =>
     Boolean(
       (b.selectedDates && b.selectedDates.split(",").filter(Boolean).length > 1) ||

@@ -29,6 +29,7 @@ function CreateBookingContent() {
   const prefillPricingMethod = searchParams.get("pricingMethod") || "";
   const prefillEndDate = searchParams.get("eventEndDate") || "";
   const prefillDatesRaw = searchParams.get("dates") || "";
+  const prefillDateSlotsRaw = searchParams.get("dateSlots") || "";
   const prefillAmount = searchParams.get("amount") || "";
   const prefillOwnerId = searchParams.get("ownerId") || "";
   const prefillOwnerName = searchParams.get("ownerName") || "";
@@ -42,6 +43,20 @@ function CreateBookingContent() {
         .sort(),
     [prefillDatesRaw]
   );
+
+  const prefillDateSlotsJson = useMemo(() => {
+    if (!prefillDateSlotsRaw.trim()) return "";
+    const mapped: Record<string, string[]> = {};
+    for (const part of prefillDateSlotsRaw.split(";")) {
+      const [date, keysRaw] = part.split(":");
+      if (!date?.trim() || !keysRaw) continue;
+      mapped[date.trim()] = keysRaw
+        .split("|")
+        .map((key) => key.trim())
+        .filter(Boolean);
+    }
+    return Object.keys(mapped).length ? JSON.stringify(mapped) : "";
+  }, [prefillDateSlotsRaw]);
 
   const prefillSlotKeys = useMemo(() => {
     const fromSlots = prefillSlotsRaw
@@ -79,6 +94,7 @@ function CreateBookingContent() {
         selectedDates: (prefillDates.length > 0 ? prefillDates : startDate ? [startDate] : []).join(","),
         slot: useSlots ? prefillSlot || timedKeys.join(", ") : "Full Day",
         slotKey: useSlots ? timedKeys.join(",") : "full_day",
+        dateSlotsJson: prefillDateSlotsJson,
         pricingMethod: (useSlots ? "slot_based" : "full_day") as "full_day" | "slot_based",
         bookingAmount: prefillAmount || "",
         availabilityLabel: fromAvailability ? "Reserved from Availability" : "",
@@ -101,6 +117,7 @@ function CreateBookingContent() {
     prefillSlot,
     prefillSlotKeys,
     prefillPricingMethod,
+    prefillDateSlotsJson,
   ]);
 
   const [form, setForm] = useState<BookingFormValues>(initialForm);

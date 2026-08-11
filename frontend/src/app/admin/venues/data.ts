@@ -113,7 +113,7 @@ export const DEFAULT_PRICING_SLOTS: import("./types").PricingSlot[] = [
     key: "night",
     name: "Night",
     enabled: true,
-    timeLabel: "9 PM – 12 AM",
+    timeLabel: "9 PM – 11:59 PM",
     price: 25000,
     minBookingAmount: 8000,
     maxGuests: 400,

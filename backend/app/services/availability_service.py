@@ -15,13 +15,16 @@ from app.repositories.availability_repository import (
     AvailabilityRepository,
     AvailabilitySlotRepository,
 )
+from app.repositories.booking_repository import BookingRepository
 from app.repositories.venue_owner_repository import VenueOwnerRepository
 from app.repositories.venue_repository import VenueRepository
 from app.schemas.availability import (
     AvailabilityDashboard,
+    AvailabilityDayBooking,
     AvailabilityDayDetailResponse,
     AvailabilityListResponse,
     AvailabilityMonthResponse,
+    DayAvailabilityResponse,
     BlockCreateRequest,
     BlockMutationResponse,
     BlockResponse,
@@ -31,7 +34,6 @@ from app.schemas.availability import (
 )
 from app.services.availability_block_service import AvailabilityBlockService
 from app.services.availability_calendar_service import AvailabilityCalendarService
-from app.services.availability_dashboard_service import AvailabilityDashboardService
 from app.services.availability_generator_service import AvailabilityGeneratorService
 from app.services.availability_validation_service import AvailabilityValidationService
 from app.services.permission_service import DataScope, PermissionService
@@ -43,6 +45,7 @@ class AvailabilityService:
         self.db = db
         self.venues = VenueRepository(db)
         self.owners = VenueOwnerRepository(db)
+        self.bookings = BookingRepository(db)
         self.permissions = PermissionService(db)
         self.days = AvailabilityRepository(db)
         self.slots = AvailabilitySlotRepository(db)
@@ -50,8 +53,7 @@ class AvailabilityService:
         self.logs = AvailabilityLogRepository(db)
         self.generator = AvailabilityGeneratorService(db)
         self.rules = AvailabilityValidationService()
-        self.dashboard_svc = AvailabilityDashboardService(self.days, self.slots)
-        self.calendar = AvailabilityCalendarService(self.days, self.dashboard_svc, self.permissions)
+        self.calendar = AvailabilityCalendarService(self.days, self.bookings, self.permissions)
         self.blocks = AvailabilityBlockService(db)
 
     def _assert_read(self, actor: User, venue: Venue) -> None:
@@ -157,7 +159,7 @@ class AvailabilityService:
                 status_code=http_status.HTTP_404_NOT_FOUND,
                 detail="Availability not found for this date.",
             )
-        return self.calendar.day_detail(actor, venue, row)
+        return await self.calendar.day_detail(actor, venue, row)
 
     async def dashboard(
         self, actor: User, venue_id: uuid.UUID, year: int | None, month: int | None
@@ -172,7 +174,42 @@ class AvailabilityService:
         y = year or today.year
         m = month or today.month
         start, end = month_bounds(y, m)
-        return await self.dashboard_svc.for_range(venue.id, start, end, today)
+        days = await self.calendar.overlay_range(actor, venue, start, end)
+        return self.calendar.dashboard_from_days(days, today)
+
+    async def get_venue_calendar(
+        self,
+        actor: User,
+        venue_id: uuid.UUID,
+        year: int,
+        month: int,
+        start: date | None = None,
+        end: date | None = None,
+    ) -> AvailabilityMonthResponse:
+        return await self.month(actor, venue_id, year, month, start, end)
+
+    async def get_day_details(
+        self, actor: User, venue_id: uuid.UUID, availability_date: date
+    ) -> AvailabilityDayDetailResponse:
+        return await self.day_detail(actor, venue_id, availability_date)
+
+    async def get_bookings_for_day(
+        self, actor: User, venue_id: uuid.UUID, availability_date: date
+    ) -> list[AvailabilityDayBooking]:
+        detail = await self.day_detail(actor, venue_id, availability_date)
+        return detail.bookings
+
+    def calculate_availability(self, *args, **kwargs) -> DayAvailabilityResponse:
+        return self.calendar.calculate_availability(*args, **kwargs)
+
+    def get_available_slots(self, day: DayAvailabilityResponse) -> list[str]:
+        return self.calendar.get_available_slots(day)
+
+    def calculate_occupancy(self, days, today: date) -> AvailabilityDashboard:
+        return self.calendar.calculate_occupancy(days, today)
+
+    async def refresh_calendar(self, actor: User, venue_id: uuid.UUID) -> MessageResponse:
+        return await self.regenerate(actor, venue_id)
 
     async def regenerate(self, actor: User, venue_id: uuid.UUID) -> MessageResponse:
         venue = await self._load_venue(venue_id)

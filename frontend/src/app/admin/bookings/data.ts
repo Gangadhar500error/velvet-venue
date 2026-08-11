@@ -16,6 +16,7 @@ export const paymentMethodOptions = [
   { value: "cheque", label: "Cheque" },
   { value: "netbanking", label: "Net Banking" },
   { value: "link", label: "Payment Link" },
+  { value: "other", label: "Other" },
 ];
 
 export const recordPaymentMethodOptions = [
@@ -24,6 +25,7 @@ export const recordPaymentMethodOptions = [
   { value: "card", label: "Card" },
   { value: "bank_transfer", label: "Bank Transfer" },
   { value: "cheque", label: "Cheque" },
+  { value: "other", label: "Other" },
 ];
 
 export function formatCurrency(amount: number) {
@@ -632,6 +634,7 @@ export const emptyBookingForm: BookingFormValues = {
   eventDate: "",
   eventEndDate: "",
   selectedDates: "",
+  dateSlotsJson: "",
   guestCount: "",
   specialRequirements: "",
   bookingAmount: "",
@@ -711,6 +714,7 @@ export function bookingToFormValues(b: Booking): BookingFormValues {
     eventDate: b.eventDate,
     eventEndDate: b.eventEndDate || "",
     selectedDates: b.selectedDates || "",
+    dateSlotsJson: "",
     guestCount: String(b.guestCount || ""),
     specialRequirements: b.specialRequirements || "",
     bookingAmount: String(b.bookingAmount || ""),

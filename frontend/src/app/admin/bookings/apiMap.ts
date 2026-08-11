@@ -1,6 +1,7 @@
 import type { BookingFormValues } from "./types";
 import {
   buildMealGuestEntries,
+  parseDateSlotsJson,
   parseFoodSlotKeys,
   parseSelectedSlotKeys,
   resolveBookingDates,
@@ -26,6 +27,13 @@ export function formToBookingPayload(form: BookingFormValues): BookingQuotePaylo
     .map((name) => name.trim())
     .filter(Boolean)
     .map((name) => ({ name, price: 0, quantity: 1 }));
+  const perDate = parseDateSlotsJson(form.dateSlotsJson);
+  const dateSlots = Object.entries(perDate)
+    .filter(([, keys]) => keys.length > 0)
+    .map(([event_date, keys]) => ({ event_date, slot_keys: keys }));
+  const receivedRaw = form.advancePaid.trim();
+  const amountReceived =
+    receivedRaw === "" ? undefined : Number(receivedRaw);
 
   return {
     venue_id: form.venueId,
@@ -44,5 +52,7 @@ export function formToBookingPayload(form: BookingFormValues): BookingQuotePaylo
     discount: Number(form.discountAmount) || 0,
     assigned_executive: form.assignedExecutive || null,
     payment_method: form.paymentMethod || null,
+    amount_received: Number.isFinite(amountReceived) ? amountReceived : undefined,
+    date_slots: dateSlots.length ? dateSlots : undefined,
   };
 }
