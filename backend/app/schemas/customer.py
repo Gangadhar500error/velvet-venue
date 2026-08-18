@@ -160,7 +160,7 @@ class CustomerListItem(BaseModel):
     customer_type: str
     profile_image: str | None
     created_at: datetime
-    # Computed (default 0 until booking module exists)
+    # Aggregated from bookings table for this customer
     bookings: int = 0
     lifetime_spend: float = 0.0
     last_booking_date: date | None = None
@@ -234,6 +234,18 @@ class CustomerInvoiceSummary(BaseModel):
     amount: float
     status: str
     issued_at: datetime | None
+    invoice_type: str = "booking"
+    gst_amount: float = 0.0
+    booking_id: uuid.UUID | None = None
+    booking_number: str = ""
+    venue_id: uuid.UUID | None = None
+    venue_name: str = ""
+    business_profile_id: uuid.UUID | None = None
+    business_name: str = ""
+    paid_amount: float = 0.0
+    remaining_amount: float = 0.0
+    payment_status: str = "pending"
+    payment_method: str | None = None
 
 
 class CustomerReviewSummary(BaseModel):

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Columns3, Download, Filter, Plus, Search, Upload } from "lucide-react";
 import { PageHeader } from "../_components/ui/PageHeader";
 import { Button } from "../_components/ui/Button";
@@ -11,6 +11,7 @@ import { confirmAction, notify } from "../_components/ui/Toast";
 import { Venue, VenueColumnKey, VenueFilters } from "./types";
 import {
   deleteVenue,
+  fetchAllVenuesForExport,
   fetchVenues,
   filtersToParams,
   mapVenueListItem,
@@ -18,6 +19,7 @@ import {
 } from "@/lib/venues";
 import { fetchBusinessProfiles, mapBusinessProfileListItem } from "@/lib/business-profiles";
 import { PermissionGate } from "@/components/PermissionGate";
+import { exportVenuesCsv, exportVenuesExcel, exportVenuesPdf } from "./io";
 
 const defaultFilters: VenueFilters = {
   search: "",
@@ -49,14 +51,25 @@ const defaultColumns: Record<VenueColumnKey, boolean> = {
   actions: true,
 };
 
+type ExportFormat = "csv" | "excel" | "pdf";
+
 export default function VenuesPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [loading, setLoading] = useState(true);
   const [venues, setVenues] = useState<Venue[]>([]);
   const [total, setTotal] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
-  const [filters, setFilters] = useState<VenueFilters>(defaultFilters);
-  const [appliedFilters, setAppliedFilters] = useState<VenueFilters>(defaultFilters);
+  const [filters, setFilters] = useState<VenueFilters>(() => {
+    const ownerId = searchParams.get("ownerId") || searchParams.get("owner") || "";
+    const businessId = searchParams.get("businessId") || searchParams.get("business") || "";
+    return ownerId || businessId ? { ...defaultFilters, ownerId, businessId } : defaultFilters;
+  });
+  const [appliedFilters, setAppliedFilters] = useState<VenueFilters>(() => {
+    const ownerId = searchParams.get("ownerId") || searchParams.get("owner") || "";
+    const businessId = searchParams.get("businessId") || searchParams.get("business") || "";
+    return ownerId || businessId ? { ...defaultFilters, ownerId, businessId } : defaultFilters;
+  });
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [page, setPage] = useState(1);
@@ -65,11 +78,14 @@ export default function VenuesPage() {
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [visibleColumns, setVisibleColumns] = useState(defaultColumns);
   const [columnsOpen, setColumnsOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [businessOptions, setBusinessOptions] = useState<
     { id: string; name: string }[]
   >([]);
   const columnsRef = useRef<HTMLDivElement>(null);
+  const exportRef = useRef<HTMLDivElement>(null);
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const loadVenues = useCallback(async () => {
@@ -122,6 +138,9 @@ export default function VenuesPage() {
       if (columnsRef.current && !columnsRef.current.contains(e.target as Node)) {
         setColumnsOpen(false);
       }
+      if (exportRef.current && !exportRef.current.contains(e.target as Node)) {
+        setExportOpen(false);
+      }
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
@@ -158,6 +177,42 @@ export default function VenuesPage() {
   const toggleSelectAll = () => {
     if (selectedIds.length === venues.length) setSelectedIds([]);
     else setSelectedIds(venues.map((v) => v.id));
+  };
+
+  const resolveExportRows = useCallback(async () => {
+    if (selectedIds.length > 0) {
+      return venues.filter((v) => selectedIds.includes(v.id));
+    }
+    return fetchAllVenuesForExport(appliedFilters, sortKey, sortDir);
+  }, [selectedIds, venues, appliedFilters, sortKey, sortDir]);
+
+  const runExport = async (format: ExportFormat) => {
+    setExportOpen(false);
+    setExporting(true);
+    try {
+      const rows = await resolveExportRows();
+      if (!rows.length) {
+        notify.error("No venues to export.");
+        return;
+      }
+      const stamp = new Date().toISOString().slice(0, 10);
+      if (format === "csv") {
+        exportVenuesCsv(rows, `venues-${stamp}.csv`);
+        notify.exported();
+        return;
+      }
+      if (format === "excel") {
+        exportVenuesExcel(rows, `venues-${stamp}.xls`);
+        notify.exported();
+        return;
+      }
+      exportVenuesPdf(rows, stamp);
+      notify.exported();
+    } catch (err) {
+      notify.error(err instanceof Error ? err.message : "Export failed");
+    } finally {
+      setExporting(false);
+    }
   };
 
   const goCreate = () => router.push("/admin/venues/create");
@@ -287,9 +342,47 @@ export default function VenuesPage() {
             <Button variant="secondary" size="sm" icon={Upload}>
               Import
             </Button>
-            <Button variant="secondary" size="sm" icon={Download}>
-              Export
-            </Button>
+            <PermissionGate permission="Venue.View">
+              <div className="relative" ref={exportRef}>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  icon={Download}
+                  disabled={exporting}
+                  onClick={() => {
+                    setColumnsOpen(false);
+                    setExportOpen((v) => !v);
+                  }}
+                >
+                  {exporting ? "Exporting…" : "Export"}
+                </Button>
+                {exportOpen && (
+                  <div className="absolute right-0 top-full mt-2 w-44 bg-white border border-[#E8EAF0] rounded-xl shadow-[0_8px_24px_rgba(16,24,40,0.12)] z-30 py-1">
+                    <button
+                      type="button"
+                      className="w-full px-3 py-2 text-left text-sm text-[#374151] hover:bg-[#F8F9FB]"
+                      onClick={() => runExport("csv")}
+                    >
+                      Export CSV
+                    </button>
+                    <button
+                      type="button"
+                      className="w-full px-3 py-2 text-left text-sm text-[#374151] hover:bg-[#F8F9FB]"
+                      onClick={() => runExport("excel")}
+                    >
+                      Export Excel
+                    </button>
+                    <button
+                      type="button"
+                      className="w-full px-3 py-2 text-left text-sm text-[#374151] hover:bg-[#F8F9FB]"
+                      onClick={() => runExport("pdf")}
+                    >
+                      Export PDF
+                    </button>
+                  </div>
+                )}
+              </div>
+            </PermissionGate>
           </div>
         </div>
       </div>
@@ -320,6 +413,45 @@ export default function VenuesPage() {
           {error}
         </div>
       ) : null}
+
+      {selectedIds.length > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-[14px] border border-[#C89B3C]/20 bg-[#FFF3EB] px-4 py-3">
+          <p className="text-sm font-medium text-[#111827]">
+            <span className="text-[#C89B3C] font-semibold">{selectedIds.length}</span> venues
+            selected
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              icon={Download}
+              disabled={exporting}
+              onClick={() => runExport("csv")}
+            >
+              Export CSV
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={exporting}
+              onClick={() => runExport("excel")}
+            >
+              Export Excel
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={exporting}
+              onClick={() => runExport("pdf")}
+            >
+              Export PDF
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => setSelectedIds([])}>
+              Clear
+            </Button>
+          </div>
+        </div>
+      )}
 
       {loading ? (
         <div className="bg-white border border-[#E8EAF0] rounded-[14px] p-6 animate-pulse space-y-3">
@@ -381,6 +513,33 @@ export default function VenuesPage() {
           >
             Previous
           </Button>
+          {Array.from({ length: totalPages }, (_, i) => i + 1)
+            .filter((p) => p === 1 || p === totalPages || Math.abs(p - page) <= 1)
+            .reduce<(number | string)[]>((acc, p, idx, arr) => {
+              if (idx > 0 && p - (arr[idx - 1] as number) > 1) acc.push("...");
+              acc.push(p);
+              return acc;
+            }, [])
+            .map((p, idx) =>
+              typeof p === "string" ? (
+                <span key={`e-${idx}`} className="px-2 text-[#9CA3AF]">
+                  …
+                </span>
+              ) : (
+                <button
+                  key={p}
+                  type="button"
+                  onClick={() => setPage(p)}
+                  className={`min-w-9 h-9 rounded-[10px] text-sm font-medium transition-colors ${
+                    page === p
+                      ? "bg-[#C89B3C] text-white"
+                      : "bg-white border border-[#E8EAF0] text-[#4B5563] hover:bg-[#F8F9FB]"
+                  }`}
+                >
+                  {p}
+                </button>
+              )
+            )}
           <Button
             variant="secondary"
             size="sm"

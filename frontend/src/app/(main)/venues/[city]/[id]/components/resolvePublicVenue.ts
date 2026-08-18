@@ -163,6 +163,7 @@ export function resolvePublicVenue(workspace: Workspace): Venue {
     securityDeposit: cityMatch?.securityDeposit || Math.round(workspace.price * 0.15),
     cleaningCharges: cityMatch?.cleaningCharges || 0,
     bookingModel: cityMatch?.bookingModel || "venue_only",
+    bookingTypes: cityMatch?.bookingTypes || [cityMatch?.bookingModel || "venue_only"],
     pricingMethod: cityMatch?.pricingMethod || "full_day",
     foodPricingMethod: "slot_based",
     pricingSlots: withFull,

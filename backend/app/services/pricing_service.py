@@ -411,12 +411,6 @@ class PricingService:
             )
             for s in payload.slots
         ]
-        if payload.pricing_mode == "full_day":
-            preferred = [s for s in slots if (s.key or "").strip() == "full_day"]
-            slots = preferred or slots[:1]
-        else:
-            without_full = [s for s in slots if (s.key or "").strip() != "full_day"]
-            slots = without_full or slots
         foods = [
             FoodSlotWriteRequest(
                 id=_as_uuid(getattr(s, "id", None)),

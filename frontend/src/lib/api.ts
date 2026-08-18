@@ -8,6 +8,24 @@ const getApiBaseUrl = (): string => {
   return process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000/api/v1";
 };
 
+export function resolveMediaUrl(url?: string | null): string {
+  if (!url || typeof url !== "string") return "";
+  const trimmed = url.trim();
+  if (!trimmed) return "";
+  if (
+    trimmed.startsWith("blob:") ||
+    trimmed.startsWith("data:") ||
+    trimmed.startsWith("http://") ||
+    trimmed.startsWith("https://")
+  ) {
+    return trimmed;
+  }
+  const apiBase = getApiBaseUrl();
+  const origin = apiBase.replace(/\/api\/v1\/?$/, "");
+  const cleanPath = trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
+  return `${origin}${cleanPath}`;
+}
+
 interface ApiRequestOptions extends RequestInit {
   params?: Record<string, string | number | null | undefined>;
   retry?: boolean;
@@ -79,20 +97,35 @@ async function executeApiRequest<T>(
   }
 
   const makeRequest = async (accessToken: string | null) => {
+    const isFormData =
+      typeof FormData !== "undefined" && fetchOptions.body instanceof FormData;
     const headers: Record<string, string> = {
-      "Content-Type": "application/json",
       Accept: "application/json",
       ...(fetchOptions.headers as Record<string, string>),
     };
+
+    // Let the browser set multipart boundary for FormData uploads.
+    if (!isFormData && !headers["Content-Type"]) {
+      headers["Content-Type"] = "application/json";
+    }
+    if (isFormData) {
+      delete headers["Content-Type"];
+    }
 
     if (accessToken) {
       headers.Authorization = `Bearer ${accessToken}`;
     }
 
-    return fetch(url, {
-      ...fetchOptions,
-      headers,
-    });
+    try {
+      return await fetch(url, {
+        ...fetchOptions,
+        headers,
+      });
+    } catch {
+      throw new Error(
+        "Unable to reach the API server. Check that the backend is running and try again."
+      );
+    }
   };
 
   let response = await makeRequest(token);

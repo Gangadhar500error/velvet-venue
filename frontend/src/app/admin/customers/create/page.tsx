@@ -50,6 +50,7 @@ function CreateCustomerContent() {
       ...cloned,
       name: `${cloned.name} (Copy)`,
       email: "",
+      phone: "",
       emailVerified: false,
       mobileVerified: false,
       status: "pending" as const,

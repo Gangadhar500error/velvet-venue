@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   Columns3,
   Download,
@@ -19,17 +19,33 @@ import {
   BusinessProfile,
   BusinessColumnKey,
   BusinessProfileFilters,
+  BusinessProfileFormValues,
+  BusinessStatus,
+  VerificationStatus,
 } from "./types";
+import { emptyBankAccount, emptyBusinessForm } from "./data";
 import {
+  approveBusinessProfile,
+  createBusinessProfile,
   deleteBusinessProfile,
+  fetchAllBusinessProfilesForExport,
   fetchBusinessProfiles,
   filtersToParams,
+  formToCreatePayload,
   mapBusinessProfileListItem,
+  rejectBusinessProfile,
   updateBusinessProfile,
 } from "@/lib/business-profiles";
 import { fetchVenueOwners, mapVenueOwnerListItem } from "@/lib/venue-owners";
 import { PermissionGate } from "@/components/PermissionGate";
 import type { OwnerSelectOption } from "./components/BusinessProfileWorkspace";
+import {
+  downloadBusinessProfileImportTemplate,
+  exportBusinessProfilesCsv,
+  exportBusinessProfilesExcel,
+  exportBusinessProfilesPdf,
+  parseBusinessProfileImportFile,
+} from "./io";
 
 const defaultFilters: BusinessProfileFilters = {
   search: "",
@@ -55,14 +71,35 @@ const defaultColumns: Record<BusinessColumnKey, boolean> = {
   actions: true,
 };
 
+type ExportFormat = "csv" | "excel" | "pdf";
+
+function normalizeStatus(value?: string): BusinessStatus {
+  const v = (value || "").toLowerCase();
+  if (v === "inactive" || v === "active" || v === "pending") return v;
+  return "pending";
+}
+
+function normalizeVerification(value?: string): VerificationStatus {
+  const v = (value || "").toLowerCase();
+  if (v === "verified" || v === "rejected") return v;
+  return "pending";
+}
+
 export default function BusinessProfilePage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [loading, setLoading] = useState(true);
   const [businesses, setBusinesses] = useState<BusinessProfile[]>([]);
   const [total, setTotal] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
-  const [filters, setFilters] = useState<BusinessProfileFilters>(defaultFilters);
-  const [appliedFilters, setAppliedFilters] = useState<BusinessProfileFilters>(defaultFilters);
+  const [filters, setFilters] = useState<BusinessProfileFilters>(() => {
+    const owner = searchParams.get("owner") || "";
+    return owner ? { ...defaultFilters, owner } : defaultFilters;
+  });
+  const [appliedFilters, setAppliedFilters] = useState<BusinessProfileFilters>(() => {
+    const owner = searchParams.get("owner") || "";
+    return owner ? { ...defaultFilters, owner } : defaultFilters;
+  });
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [page, setPage] = useState(1);
@@ -71,9 +108,16 @@ export default function BusinessProfilePage() {
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [visibleColumns, setVisibleColumns] = useState(defaultColumns);
   const [columnsOpen, setColumnsOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [importing, setImporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [ownerOptions, setOwnerOptions] = useState<OwnerSelectOption[]>([]);
   const columnsRef = useRef<HTMLDivElement>(null);
+  const exportRef = useRef<HTMLDivElement>(null);
+  const importRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const loadBusinesses = useCallback(async () => {
@@ -127,6 +171,12 @@ export default function BusinessProfilePage() {
       if (columnsRef.current && !columnsRef.current.contains(e.target as Node)) {
         setColumnsOpen(false);
       }
+      if (exportRef.current && !exportRef.current.contains(e.target as Node)) {
+        setExportOpen(false);
+      }
+      if (importRef.current && !importRef.current.contains(e.target as Node)) {
+        setImportOpen(false);
+      }
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
@@ -172,9 +222,14 @@ export default function BusinessProfilePage() {
     router.push(`/admin/business-profile/${business.id}/edit`);
 
   const handleDelete = async (business: BusinessProfile) => {
+    const venueNote =
+      business.totalVenues > 0
+        ? `\n\nThis will also soft-delete ${business.totalVenues} linked venue(s).`
+        : "";
     const ok = await confirmAction({
       title: "Delete Business Profile?",
-      message: `Are you sure you want to delete ${business.businessName}?\n\nThis will soft-delete the business profile.`,
+      message: `Are you sure you want to delete ${business.businessName}?${venueNote}\n\nThis will soft-delete the business profile.`,
+      confirmLabel: "Delete",
     });
     if (!ok) return;
     try {
@@ -198,6 +253,38 @@ export default function BusinessProfilePage() {
     }
   };
 
+  const handleApprove = async (business: BusinessProfile) => {
+    const ok = await confirmAction({
+      title: "Approve Business Profile?",
+      message: `Approve ${business.businessName}?\n\nVerification will be set to Verified and status to Active.`,
+      confirmLabel: "Approve",
+    });
+    if (!ok) return;
+    try {
+      await approveBusinessProfile(business.id);
+      notify.statusUpdated(`${business.businessName} has been approved.`);
+      await loadBusinesses();
+    } catch (err) {
+      notify.error(err instanceof Error ? err.message : "Approve failed");
+    }
+  };
+
+  const handleReject = async (business: BusinessProfile) => {
+    const ok = await confirmAction({
+      title: "Reject Business Profile?",
+      message: `Reject verification for ${business.businessName}?`,
+      confirmLabel: "Reject",
+    });
+    if (!ok) return;
+    try {
+      await rejectBusinessProfile(business.id, "Rejected by admin");
+      notify.statusUpdated(`${business.businessName} has been rejected.`);
+      await loadBusinesses();
+    } catch (err) {
+      notify.error(err instanceof Error ? err.message : "Reject failed");
+    }
+  };
+
   const applySearch = (value: string) => {
     setFilters((prev) => ({ ...prev, search: value }));
     if (searchTimer.current) clearTimeout(searchTimer.current);
@@ -205,6 +292,121 @@ export default function BusinessProfilePage() {
       setAppliedFilters((prev) => ({ ...prev, search: value }));
       setPage(1);
     }, 350);
+  };
+
+  const resolveExportRows = useCallback(async () => {
+    if (selectedIds.length > 0) {
+      return businesses.filter((b) => selectedIds.includes(b.id));
+    }
+    return fetchAllBusinessProfilesForExport(appliedFilters, sortKey, sortDir);
+  }, [selectedIds, businesses, appliedFilters, sortKey, sortDir]);
+
+  const runExport = async (format: ExportFormat) => {
+    setExportOpen(false);
+    setExporting(true);
+    try {
+      const rows = await resolveExportRows();
+      if (!rows.length) {
+        notify.error("No business profiles to export.");
+        return;
+      }
+      const stamp = new Date().toISOString().slice(0, 10);
+      if (format === "csv") {
+        exportBusinessProfilesCsv(rows, `business-profiles-${stamp}.csv`);
+        notify.exported();
+        return;
+      }
+      if (format === "excel") {
+        exportBusinessProfilesExcel(rows, `business-profiles-${stamp}.xls`);
+        notify.exported();
+        return;
+      }
+      exportBusinessProfilesPdf(rows, stamp);
+      notify.exported();
+    } catch (err) {
+      notify.error(err instanceof Error ? err.message : "Export failed");
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const handleImportFile = async (file: File | null) => {
+    if (!file) return;
+    setImportOpen(false);
+    setImporting(true);
+    try {
+      const rows = await parseBusinessProfileImportFile(file);
+      if (!rows.length) {
+        notify.error("No valid business profile rows found in the file.");
+        return;
+      }
+
+      // Ensure we have enough owners for email lookup.
+      let owners = ownerOptions;
+      if (!owners.length) {
+        const data = await fetchVenueOwners({ page: 1, page_size: 100, sort_by: "name" });
+        owners = data.items.map(mapVenueOwnerListItem).map((o) => ({
+          id: o.id,
+          name: o.name,
+          email: o.email,
+          phone: o.phone,
+        }));
+        setOwnerOptions(owners);
+      }
+
+      let created = 0;
+      let failed = 0;
+
+      for (const row of rows) {
+        const owner = owners.find(
+          (o) => o.email.trim().toLowerCase() === row.ownerEmail.trim().toLowerCase()
+        );
+        if (!owner) {
+          failed += 1;
+          continue;
+        }
+        const form: BusinessProfileFormValues = {
+          ...emptyBusinessForm,
+          businessName: row.businessName,
+          legalBusinessName: row.legalBusinessName || row.businessName,
+          businessType: row.businessType,
+          ownerId: owner.id,
+          ownerName: owner.name,
+          ownerEmail: owner.email,
+          ownerPhone: owner.phone,
+          city: row.city || "",
+          country: row.country || "India",
+          state: row.state || "",
+          supportEmail: row.supportEmail || "",
+          supportPhone: row.supportPhone || "",
+          addressLine1: row.addressLine1 || "",
+          gstNumber: row.gstNumber || "",
+          panNumber: row.panNumber || "",
+          status: normalizeStatus(row.status),
+          verification: normalizeVerification(row.verification),
+          bankAccounts: [emptyBankAccount(true)],
+        };
+        try {
+          await createBusinessProfile(formToCreatePayload(form));
+          created += 1;
+        } catch {
+          failed += 1;
+        }
+      }
+
+      notify.imported();
+      if (failed > 0) {
+        notify.statusUpdated(
+          `Import finished: ${created} created, ${failed} failed (missing owner email or validation).`
+        );
+      }
+      await loadBusinesses();
+    } catch (err) {
+      notify.error(err instanceof Error ? err.message : "Import failed");
+    } finally {
+      setImporting(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
   };
 
   return (
@@ -296,12 +498,93 @@ export default function BusinessProfilePage() {
             </div>
 
             <div className="hidden sm:block w-px h-7 bg-[#E8EAF0] mx-0.5" aria-hidden />
-            <Button variant="secondary" size="sm" icon={Upload}>
-              Import
-            </Button>
-            <Button variant="secondary" size="sm" icon={Download}>
-              Export
-            </Button>
+
+            <div className="relative" ref={importRef}>
+              <PermissionGate permission="BusinessProfile.Create">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  icon={Upload}
+                  disabled={importing}
+                  onClick={() => {
+                    setExportOpen(false);
+                    setImportOpen((v) => !v);
+                  }}
+                >
+                  {importing ? "Importing…" : "Import"}
+                </Button>
+              </PermissionGate>
+              {importOpen && (
+                <div className="absolute right-0 top-full mt-2 w-52 bg-white border border-[#E8EAF0] rounded-xl shadow-[0_8px_24px_rgba(16,24,40,0.12)] z-30 py-1">
+                  <button
+                    type="button"
+                    className="w-full px-3 py-2 text-left text-sm text-[#374151] hover:bg-[#F8F9FB]"
+                    onClick={() => {
+                      setImportOpen(false);
+                      downloadBusinessProfileImportTemplate();
+                    }}
+                  >
+                    Download Template
+                  </button>
+                  <button
+                    type="button"
+                    className="w-full px-3 py-2 text-left text-sm text-[#374151] hover:bg-[#F8F9FB]"
+                    onClick={() => fileInputRef.current?.click()}
+                  >
+                    Upload CSV / Excel
+                  </button>
+                </div>
+              )}
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".csv,.xls,.xlsx,text/csv,application/vnd.ms-excel"
+                className="hidden"
+                onChange={(e) => handleImportFile(e.target.files?.[0] || null)}
+              />
+            </div>
+
+            <PermissionGate permission="BusinessProfile.View">
+              <div className="relative" ref={exportRef}>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  icon={Download}
+                  disabled={exporting}
+                  onClick={() => {
+                    setImportOpen(false);
+                    setExportOpen((v) => !v);
+                  }}
+                >
+                  {exporting ? "Exporting…" : "Export"}
+                </Button>
+                {exportOpen && (
+                  <div className="absolute right-0 top-full mt-2 w-44 bg-white border border-[#E8EAF0] rounded-xl shadow-[0_8px_24px_rgba(16,24,40,0.12)] z-30 py-1">
+                    <button
+                      type="button"
+                      className="w-full px-3 py-2 text-left text-sm text-[#374151] hover:bg-[#F8F9FB]"
+                      onClick={() => runExport("csv")}
+                    >
+                      Export CSV
+                    </button>
+                    <button
+                      type="button"
+                      className="w-full px-3 py-2 text-left text-sm text-[#374151] hover:bg-[#F8F9FB]"
+                      onClick={() => runExport("excel")}
+                    >
+                      Export Excel
+                    </button>
+                    <button
+                      type="button"
+                      className="w-full px-3 py-2 text-left text-sm text-[#374151] hover:bg-[#F8F9FB]"
+                      onClick={() => runExport("pdf")}
+                    >
+                      Export PDF
+                    </button>
+                  </div>
+                )}
+              </div>
+            </PermissionGate>
           </div>
         </div>
       </div>
@@ -334,6 +617,45 @@ export default function BusinessProfilePage() {
         </div>
       ) : null}
 
+      {selectedIds.length > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-[14px] border border-[#C89B3C]/20 bg-[#FFF3EB] px-4 py-3">
+          <p className="text-sm font-medium text-[#111827]">
+            <span className="text-[#C89B3C] font-semibold">{selectedIds.length}</span> business
+            profiles selected
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              icon={Download}
+              disabled={exporting}
+              onClick={() => runExport("csv")}
+            >
+              Export CSV
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={exporting}
+              onClick={() => runExport("excel")}
+            >
+              Export Excel
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={exporting}
+              onClick={() => runExport("pdf")}
+            >
+              Export PDF
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => setSelectedIds([])}>
+              Clear
+            </Button>
+          </div>
+        </div>
+      )}
+
       {loading ? (
         <div className="bg-white border border-[#E8EAF0] rounded-[14px] p-6 animate-pulse space-y-3">
           {Array.from({ length: 8 }).map((_, i) => (
@@ -354,6 +676,8 @@ export default function BusinessProfilePage() {
           onEdit={goEdit}
           onDelete={handleDelete}
           onToggleStatus={handleToggleStatus}
+          onApprove={handleApprove}
+          onReject={handleReject}
           emptyAction={goCreate}
         />
       )}

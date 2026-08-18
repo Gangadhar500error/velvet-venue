@@ -183,6 +183,8 @@ export interface BookingFilters {
   phone: string;
   venue: string;
   businessId: string;
+  businessProfileId: string;
+  vendorId: string;
   eventDate: string;
   bookingStatus: string;
   paymentStatus: string;

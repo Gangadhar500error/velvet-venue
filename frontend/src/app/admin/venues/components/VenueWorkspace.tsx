@@ -68,6 +68,7 @@ import {
 import { EntityViewLayout } from "../../_components/layout/EntityViewLayout";
 import { fetchBusinessProfiles, mapBusinessProfileListItem } from "@/lib/business-profiles";
 import { fetchVenueMeta } from "@/lib/venues";
+import { resolveMediaUrl } from "@/lib/api";
 import { fetchAvailabilityWindow, isBookingUuid } from "@/lib/availability";
 import type { Booking } from "../../bookings/types";
 import type { AmenityOption } from "../data";
@@ -324,6 +325,7 @@ export function VenueWorkspace({
   const coverInputRef = useRef<HTMLInputElement>(null);
 
   const [availability, setAvailability] = useState<AvailabilityDay[]>([]);
+  const [availabilityLoading, setAvailabilityLoading] = useState(false);
 
   useEffect(() => {
     setCoverImageState(venue.coverImage || "");
@@ -337,11 +339,14 @@ export function VenueWorkspace({
     if (tab !== "availability" || mode === "create" || !venue.id) return;
     let cancelled = false;
     (async () => {
+      setAvailabilityLoading(true);
       try {
         const { days } = await fetchAvailabilityWindow(venue.id, venue.maxAdvanceBookingDays || 180);
         if (!cancelled) setAvailability(days);
       } catch {
         if (!cancelled) setAvailability([]);
+      } finally {
+        if (!cancelled) setAvailabilityLoading(false);
       }
     })();
     return () => {
@@ -354,11 +359,9 @@ export function VenueWorkspace({
     onCoverImageChange?.(url);
   };
   const setGalleryImages = (next: string[] | ((prev: string[]) => string[])) => {
-    setGalleryImagesState((prev) => {
-      const value = typeof next === "function" ? next(prev) : next;
-      onGalleryImagesChange?.(value);
-      return value;
-    });
+    const value = typeof next === "function" ? next(galleryImages) : next;
+    setGalleryImagesState(value);
+    onGalleryImagesChange?.(value);
   };
 
   const activeBusinessOptions = useMemo(() => {
@@ -770,14 +773,14 @@ export function VenueWorkspace({
             <span>
               Date Created{" "}
               <span className="font-semibold text-[#111827]">
-                {isCreate ? "â€”" : formatDateTime(venue.createdAt)}
+                {isCreate ? "—" : formatDateTime(venue.createdAt)}
               </span>
             </span>
             <span className="hidden sm:inline text-[#E8EAF0]">|</span>
             <span>
               Last Updated{" "}
               <span className="font-semibold text-[#111827]">
-                {isCreate ? "â€”" : formatDateTime(venue.updatedAt)}
+                {isCreate ? "—" : formatDateTime(venue.updatedAt)}
               </span>
             </span>
           </div>
@@ -805,7 +808,7 @@ export function VenueWorkspace({
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2 flex-wrap">
                           <h1 className="text-xl font-semibold text-[#111827] truncate">
-                            {name || (isCreate ? "New Venue" : "â€”")}
+                            {name || (isCreate ? "New Venue" : "—")}
                           </h1>
                         </div>
                         <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-2 text-[13px] text-[#4B5563]">
@@ -817,15 +820,15 @@ export function VenueWorkspace({
                           </span>
                           <span className="inline-flex items-center gap-1.5">
                             <Building2 className="w-3.5 h-3.5 text-[#9CA3AF]" />
-                            {businessName || "â€”"}
+                            {businessName || "—"}
                           </span>
                           <span className="inline-flex items-center gap-1.5">
                             <UserRound className="w-3.5 h-3.5 text-[#9CA3AF]" />
-                            {ownerName || "â€”"}
+                            {ownerName || "—"}
                           </span>
                           <span className="inline-flex items-center gap-1.5">
                             <MapPin className="w-3.5 h-3.5 text-[#9CA3AF]" />
-                            {city || "â€”"}
+                            {city || "—"}
                           </span>
                           {category && (
                             <span className="inline-flex items-center gap-1.5 text-[#374151] font-medium">
@@ -861,11 +864,11 @@ export function VenueWorkspace({
                       <CompactKpi label="Total Revenue" value={formatCurrency(venue.revenue)} />
                       <CompactKpi
                         label="Average Rating"
-                        value={venue.rating > 0 ? venue.rating.toFixed(1) : "â€”"}
+                        value={venue.rating > 0 ? venue.rating.toFixed(1) : "—"}
                       />
                       <CompactKpi
                         label="Venue Capacity"
-                        value={String(venue.maxGuests || venue.seatingCapacity || "â€”")}
+                        value={String(venue.maxGuests || venue.seatingCapacity || "—")}
                       />
                       <CompactKpi
                         label="Availability"
@@ -877,13 +880,13 @@ export function VenueWorkspace({
                     </div>
                   )}
 
-                  {/* Step 1 â€” Business Profile (create/edit) */}
+                  {/* Step 1 — Business Profile (create/edit) */}
                   {editable && (
                     <CollapsibleCard
                       id="businessProfile"
                       icon={Building2}
                       title="1. Business Profile"
-                      subtitle="Required Â· Venue inherits owner and support details"
+                      subtitle="Required · Venue inherits owner and support details"
                       open={openSections.businessProfile}
                       onToggle={toggleSection}
                     >
@@ -945,7 +948,7 @@ export function VenueWorkspace({
                           ]}
                         />
                       ) : (
-                        <InfoField label="Category" value={venue.category || "â€”"} />
+                        <InfoField label="Category" value={venue.category || "—"} />
                       )}
                       {editable ? (
                         <SelectField
@@ -955,7 +958,7 @@ export function VenueWorkspace({
                           options={venueTypeOptions.map((v) => ({ value: v, label: v }))}
                         />
                       ) : (
-                        <InfoField label="Venue Type" value={venue.venueType || "â€”"} />
+                        <InfoField label="Venue Type" value={venue.venueType || "—"} />
                       )}
                       {editable ? (
                         <SelectField
@@ -1190,34 +1193,26 @@ export function VenueWorkspace({
                     />
                   </CollapsibleCard>
 
-                  {/* Business Information â€” overview link only (no duplicate contacts) */}
+                  {/* Business Information — overview link only (no duplicate contacts) */}
                   {!editable && (
                     <CollapsibleCard
                       id="business"
                       icon={Building2}
                       title="Business Information"
+                      subtitle="Linked business profile and owner account details"
                       open={openSections.business}
                       onToggle={toggleSection}
                     >
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-10 gap-y-2">
-                        <InfoField label="Business Profile" value={venue.businessName} />
-                        <InfoField label="Venue Owner" value={venue.ownerName} />
-                        <div className="sm:col-span-2">
-                          <button
-                            type="button"
-                            onClick={() =>
-                              router.push(`/admin/business-profile/${venue.businessId}`)
-                            }
-                            className="text-sm font-medium text-[#C89B3C] hover:underline"
-                          >
-                            Open Business Profile
-                          </button>
+                      <div className="space-y-4">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-10 gap-y-2">
+                          <InfoField label="Business Profile" value={venue.businessName} />
+                          <InfoField label="Venue Owner" value={venue.ownerName} />
                         </div>
                       </div>
                     </CollapsibleCard>
                   )}
 
-                  {/* Venue Description â€” last section */}
+                  {/* Venue Description — last section */}
                   <CollapsibleCard
                     id="description"
                     icon={StickyNote}
@@ -1292,7 +1287,7 @@ export function VenueWorkspace({
             <CollapsibleCard id="cover" icon={ImageIcon} title="Cover Image" open onToggle={() => {}} noCollapse>
               <div className="relative rounded-[14px] overflow-hidden border border-[#E8EAF0] bg-[#F3F4F6] aspect-[16/7] max-h-[280px]">
                 {coverImage ? (
-                  <img src={coverImage} alt={name} className="w-full h-full object-cover" />
+                  <img src={resolveMediaUrl(coverImage)} alt={name} className="w-full h-full object-cover" />
                 ) : (
                   <div className="w-full h-full flex items-center justify-center bg-[#FFF3EB] text-[#C89B3C] text-4xl font-semibold">
                     {initials}
@@ -1524,6 +1519,7 @@ export function VenueWorkspace({
             key={venue.id}
             venue={venue}
             availability={availability}
+            loading={availabilityLoading}
             onBook={handleBookSlot}
             onViewBooking={openBookingFromRow}
             bookActionLabel="Proceed to Booking"
@@ -1544,14 +1540,14 @@ export function VenueWorkspace({
           <CollapsibleCard id="reviewsTab" icon={Star} title="Reviews" subtitle="Customer feedback for this venue" open onToggle={() => {}} noCollapse>
             <div className="flex flex-col lg:flex-row gap-4 mb-4">
               <div className="grid grid-cols-3 gap-2.5 lg:min-w-[280px]">
-                <CompactKpi label="Average Rating" value={venue.rating > 0 ? venue.rating.toFixed(1) : "â€”"} />
+                <CompactKpi label="Average Rating" value={venue.rating > 0 ? venue.rating.toFixed(1) : "—"} />
                 <CompactKpi label="Total Reviews" value={String(venue.totalReviews)} />
                 <CompactKpi label="Recommend %" value={`${recommendationPct}%`} />
               </div>
               <div className="flex-1 space-y-1.5">
                 {venue.ratingDistribution.map((row) => (
                   <div key={row.stars} className="flex items-center gap-2.5">
-                    <span className="text-[12px] text-[#6B7280] w-8">{row.stars}â˜…</span>
+                    <span className="text-[12px] text-[#6B7280] w-8">{row.stars}★</span>
                     <div className="flex-1 h-2 rounded-full bg-[#F3F4F6] overflow-hidden">
                       <div
                         className="h-full rounded-full bg-[#C89B3C]"
@@ -1732,7 +1728,7 @@ function InheritedRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex items-start gap-2 min-w-0">
       <span className="text-[#9CA3AF] shrink-0 w-[110px]">{label}</span>
-      <span className="font-semibold text-[#111827] truncate">{value || "â€”"}</span>
+      <span className="font-semibold text-[#111827] truncate">{value || "—"}</span>
     </div>
   );
 }
@@ -1843,7 +1839,7 @@ function InfoField({
           <input className={inputCls} value={value} onChange={(e) => onChange?.(e.target.value)} />
         )
       ) : (
-        <p className={`${valueCls} ${textarea ? "whitespace-pre-wrap" : ""}`}>{value || "â€”"}</p>
+        <p className={`${valueCls} ${textarea ? "whitespace-pre-wrap" : ""}`}>{value || "—"}</p>
       )}
     </InlineField>
   );
@@ -1877,7 +1873,7 @@ function NumberField({
             onChange={(e) => onChange?.(e.target.value.replace(/[^0-9]/g, ""))}
           />
         ) : (
-          <p className={valueCls}>{value || "â€”"}</p>
+          <p className={valueCls}>{value || "—"}</p>
         )}
       </InlineField>
       {hint && (
@@ -1998,7 +1994,7 @@ function ChipMultiSelect({
 }) {
   const list = editable ? options : options.filter((o) => selected.includes(o));
   if (!editable && list.length === 0) {
-    return <p className="text-sm text-[#9CA3AF]">â€”</p>;
+    return <p className="text-sm text-[#9CA3AF]">—</p>;
   }
   return (
     <div className="flex flex-wrap gap-2">
@@ -2039,13 +2035,24 @@ function GalleryTile({
   return (
     <div className="relative group rounded-[12px] overflow-hidden border border-[#E8EAF0] aspect-[4/3] bg-[#F3F4F6]">
       <img
-        src={url}
+        src={resolveMediaUrl(url)}
         alt=""
         className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
       />
       <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-colors flex items-center justify-center gap-1.5 opacity-0 group-hover:opacity-100">
         <TileIconBtn icon={Eye} onClick={onPreview} />
-        <TileIconBtn icon={Download} onClick={() => window.alert("Downloading image (demo)")} />
+        <TileIconBtn
+          icon={Download}
+          onClick={() => {
+            const link = document.createElement("a");
+            link.href = resolveMediaUrl(url);
+            link.download = "gallery_image.jpg";
+            link.target = "_blank";
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+          }}
+        />
         {editable && (
           <>
             <TileIconBtn icon={Upload} onClick={() => inputRef.current?.click()} />
@@ -2245,16 +2252,22 @@ function GalleryLightbox({
 }
 
 function DayStatusPill({ status }: { status: DayAvailabilityStatus }) {
-  const styles: Record<DayAvailabilityStatus, string> = {
+  const styles: Partial<Record<DayAvailabilityStatus, string>> = {
     available: "bg-[#ECFDF3] text-[#16A34A] border-[#D3F8E1]",
     booked: "bg-[#FFF3EB] text-[#C89B3C] border-[#FFD4B0]",
     blocked: "bg-[#F3F4F6] text-[#6B7280] border-[#E5E7EB]",
     holiday: "bg-[#FFFBEB] text-[#D97706] border-[#FDE68A]",
     maintenance: "bg-[#EFF6FF] text-[#2563EB] border-[#BFDBFE]",
+    partially_booked: "bg-[#FFF3EB] text-[#C89B3C] border-[#FFD4B0]",
+    closed: "bg-[#F3F4F6] text-[#6B7280] border-[#E5E7EB]",
+    completed: "bg-[#ECFDF3] text-[#16A34A] border-[#D3F8E1]",
+    cancelled: "bg-[#FEF2F2] text-[#DC2626] border-[#FCA5A5]",
   };
   return (
     <span
-      className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold border capitalize ${styles[status]}`}
+      className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold border capitalize ${
+        styles[status] || "bg-[#F3F4F6] text-[#6B7280] border-[#E5E7EB]"
+      }`}
     >
       {status}
     </span>

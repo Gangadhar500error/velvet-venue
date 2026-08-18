@@ -295,6 +295,187 @@ export function mapBookingDetail(detail: BookingDetailApi): Booking {
   };
 }
 
+export interface BookingListItemApi {
+  id: string;
+  booking_number: string;
+  customer_id: string;
+  customer_name: string;
+  customer_phone?: string | null;
+  customer_email?: string | null;
+  vendor_id: string;
+  vendor_name: string;
+  business_profile_id: string;
+  business_name: string;
+  venue_id: string;
+  venue_name: string;
+  venue_city?: string | null;
+  event_type?: string | null;
+  booking_type: string;
+  booking_mode: string;
+  booking_status: string;
+  payment_status: string;
+  approval_status: string;
+  booking_date: string;
+  start_date: string;
+  end_date: string;
+  guest_count: number;
+  total_amount: number;
+  paid_amount: number;
+  remaining_amount: number;
+  currency: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BookingListResponse {
+  success: boolean;
+  items: BookingListItemApi[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+}
+
+export interface BookingListParams {
+  search?: string;
+  booking_status?: string;
+  payment_status?: string;
+  venue_id?: string;
+  customer_id?: string;
+  vendor_id?: string;
+  business_profile_id?: string;
+  event_date?: string;
+  date_from?: string;
+  date_to?: string;
+  assigned_executive?: string;
+  sort_by?: string;
+  sort_dir?: "asc" | "desc";
+  page?: number;
+  page_size?: number;
+}
+
+function mapBookingModeLabel(mode?: string | null): string {
+  if (mode === "slot_based") return "Slot Based";
+  return "Full Day";
+}
+
+export function mapBookingListItem(item: BookingListItemApi): Booking {
+  return {
+    id: item.id,
+    bookingId: item.booking_number,
+    customerId: item.customer_id,
+    customerName: item.customer_name || "",
+    customerPhone: item.customer_phone || "",
+    customerEmail: item.customer_email || "",
+    customerCity: "",
+    businessId: item.business_profile_id,
+    businessName: item.business_name || "",
+    venueId: item.venue_id,
+    venueName: item.venue_name || "",
+    venueCity: item.venue_city || "",
+    vendorId: item.vendor_id,
+    vendorName: item.vendor_name || "",
+    eventType: item.event_type || "",
+    eventDate: item.start_date,
+    eventEndDate: item.end_date,
+    bookingDate: item.booking_date,
+    slot: mapBookingModeLabel(item.booking_mode),
+    guestCount: item.guest_count || 0,
+    specialRequirements: "",
+    bookingAmount: item.total_amount || 0,
+    advancePaid: item.paid_amount || 0,
+    paidAmount: item.paid_amount || 0,
+    pendingAmount: item.remaining_amount || 0,
+    refundAmount: 0,
+    taxAmount: 0,
+    discountAmount: 0,
+    addons: [],
+    bookingStatus: (item.booking_status || "pending") as BookingStatus,
+    paymentStatus: mapPaymentStatus(item.payment_status),
+    invoiceStatus: "not_generated",
+    paymentMethod: "",
+    assignedExecutive: "",
+    notes: "",
+    createdAt: item.created_at,
+    updatedAt: item.updated_at,
+    createdBy: "",
+    updatedBy: "",
+    transactions: [],
+    invoices: [],
+    documents: [],
+    timeline: [],
+    noteEntries: [],
+  };
+}
+
+export function filtersToBookingParams(
+  filters: {
+    search: string;
+    bookingId: string;
+    customer: string;
+    phone: string;
+    venue: string;
+    businessId: string;
+    businessProfileId?: string;
+    vendorId?: string;
+    eventDate: string;
+    bookingStatus: string;
+    paymentStatus: string;
+    dateFrom: string;
+    dateTo: string;
+    assignedExecutive: string;
+  },
+  page: number,
+  pageSize: number,
+  sortKey: string,
+  sortDir: "asc" | "desc"
+): BookingListParams {
+  const search =
+    filters.search ||
+    filters.bookingId ||
+    filters.customer ||
+    filters.phone ||
+    filters.venue ||
+    (!filters.businessProfileId ? filters.businessId : "") ||
+    undefined;
+
+  const sortMap: Record<string, string> = {
+    eventDate: "event_date",
+    bookingId: "booking_number",
+    bookingAmount: "total_amount",
+    bookingDate: "created_at",
+    createdAt: "created_at",
+    guests: "created_at",
+    paidAmount: "total_amount",
+    pendingAmount: "total_amount",
+  };
+
+  const paymentStatus =
+    filters.paymentStatus === "unpaid" ? "pending" : filters.paymentStatus || undefined;
+
+  return {
+    search: search || undefined,
+    booking_status: filters.bookingStatus || undefined,
+    payment_status: paymentStatus,
+    event_date: filters.eventDate || undefined,
+    date_from: filters.dateFrom || undefined,
+    date_to: filters.dateTo || undefined,
+    assigned_executive: filters.assignedExecutive || undefined,
+    vendor_id: filters.vendorId || undefined,
+    business_profile_id: filters.businessProfileId || undefined,
+    sort_by: sortMap[sortKey] || "created_at",
+    sort_dir: sortDir,
+    page,
+    page_size: pageSize,
+  };
+}
+
+export async function fetchBookings(params: BookingListParams = {}) {
+  return apiRequest<BookingListResponse>("/bookings", {
+    params: params as Record<string, string | number | null | undefined>,
+  });
+}
+
 export async function fetchBooking(bookingId: string) {
   return apiRequest<BookingDetailApi>(`/bookings/${bookingId}`);
 }

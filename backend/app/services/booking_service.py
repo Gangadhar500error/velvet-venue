@@ -431,7 +431,7 @@ class BookingService:
                 status_code=http_status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail="At least one booking date is required.",
             )
-        if not quote.slots:
+        if quote.booking_type != "venue_food" and not quote.slots:
             raise HTTPException(
                 status_code=http_status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail="Select a valid venue slot.",
@@ -507,6 +507,9 @@ class BookingService:
                 venue.id, food.event_date, food.food.id, payload, commit=False
             )
             seen_food.add(key)
+            day = await self.availability_days.get_day(venue.id, food.event_date)
+            if day is not None and first_day_id is None:
+                first_day_id = day.id
         return first_day_id
 
     async def _assert_bookable_venue(self, actor: User, venue: Venue) -> None:

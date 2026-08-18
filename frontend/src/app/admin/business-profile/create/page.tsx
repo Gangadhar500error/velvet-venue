@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { BusinessProfileWorkspace } from "../components/BusinessProfileWorkspace";
 import type { OwnerSelectOption } from "../components/BusinessProfileWorkspace";
@@ -18,6 +18,7 @@ import {
   fetchBusinessProfile,
   formToCreatePayload,
   mapBusinessProfileDetail,
+  uploadBusinessDocument,
 } from "@/lib/business-profiles";
 import { fetchVenueOwners, mapVenueOwnerListItem } from "@/lib/venue-owners";
 
@@ -33,6 +34,7 @@ function CreateBusinessProfileContent() {
   const [form, setForm] = useState<BusinessProfileFormValues>(emptyBusinessForm);
   const [documents, setDocuments] = useState<BusinessDocument[]>(defaultDocumentSlots);
   const [saving, setSaving] = useState(false);
+  const pendingFilesRef = useRef<Record<string, File>>({});
 
   useEffect(() => {
     let cancelled = false;
@@ -75,7 +77,14 @@ function CreateBusinessProfileContent() {
         });
         setSourceDocs(
           mapped.documents?.length
-            ? mapped.documents.map((d) => ({ ...d, status: "pending" as const, fileName: undefined, fileSize: undefined, uploadedDate: "" }))
+            ? mapped.documents.map((d) => ({
+                ...d,
+                status: "pending" as const,
+                fileName: undefined,
+                fileSize: undefined,
+                fileUrl: undefined,
+                uploadedDate: "",
+              }))
             : defaultDocumentSlots()
         );
       } catch {
@@ -134,6 +143,7 @@ function CreateBusinessProfileContent() {
     bankProofFileName: form.bankProofFileName,
     bankProofFileSize: form.bankProofFileSize,
     bankProofUploadedDate: form.bankProofUploadedDate,
+    bankAccounts: form.bankAccounts,
     notes: form.notes,
     status: form.status,
     verification: form.verification,
@@ -152,24 +162,46 @@ function CreateBusinessProfileContent() {
     else router.push("/admin/business-profile");
   };
 
-  const handleSave = async () => {
+  const handleContinue = () => {
     if (!form.businessName.trim() || !form.legalBusinessName.trim() || !form.businessType.trim()) {
       notify.validation("Business name, legal name, and business type are required.");
-      return;
+      return false;
     }
     if (!form.ownerId.trim() || !form.city.trim()) {
       notify.validation("Venue owner and city are required.");
-      return;
+      return false;
     }
     if (form.ifscCode.trim() && !isValidIfsc(form.ifscCode)) {
       notify.validation("Please enter a valid IFSC code (e.g. HDFC0001234).");
-      return;
+      return false;
     }
+    const invalidBank = (form.bankAccounts || []).find(
+      (b) => b.ifscCode.trim() && !isValidIfsc(b.ifscCode)
+    );
+    if (invalidBank) {
+      notify.validation("Please enter a valid IFSC code for all bank accounts.");
+      return false;
+    }
+    return true;
+  };
+
+  const handleSave = async () => {
+    if (!handleContinue()) return;
     setSaving(true);
     try {
-      const result = await createBusinessProfile(formToCreatePayload(form));
+      const result = await createBusinessProfile(formToCreatePayload(form, documents));
+      const profileId = result.business_profile.id;
+      for (const [docId, file] of Object.entries(pendingFilesRef.current)) {
+        const doc = documents.find((d) => d.id === docId);
+        if (!doc || !file) continue;
+        try {
+          await uploadBusinessDocument(profileId, file, doc.name, doc.name);
+        } catch {
+          // Profile is created; missing files can be re-uploaded from the detail page.
+        }
+      }
       notify.created("Business profile");
-      router.push(`/admin/business-profile/${result.business_profile.id}`);
+      router.push(`/admin/business-profile/${profileId}`);
     } catch (err) {
       notify.error(err instanceof Error ? err.message : "Failed to create business profile");
     } finally {
@@ -195,10 +227,14 @@ function CreateBusinessProfileContent() {
       documents={documents}
       onDocumentsChange={setDocuments}
       onCancel={handleCancel}
+      onContinue={handleContinue}
       onSave={handleSave}
       saving={saving}
       ownerOptions={ownerOptions}
       pageLabel={sourceForm ? "Clone Business Profile" : "Create Business Profile"}
+      onPendingDocumentFile={(docId, file) => {
+        pendingFilesRef.current[docId] = file;
+      }}
     />
   );
 }

@@ -4,6 +4,7 @@ import type {
   CustomerBooking,
   CustomerFilters,
   CustomerFormValues,
+  CustomerInvoice,
   CustomerReview,
   CustomerStatus,
   Gender,
@@ -91,6 +92,18 @@ interface ApiCustomerDetail {
     amount: number;
     status: string;
     issued_at: string | null;
+    invoice_type?: string;
+    gst_amount?: number;
+    booking_id?: string | null;
+    booking_number?: string;
+    venue_id?: string | null;
+    venue_name?: string;
+    business_profile_id?: string | null;
+    business_name?: string;
+    paid_amount?: number;
+    remaining_amount?: number;
+    payment_status?: string;
+    payment_method?: string | null;
   }>;
   reviews: Array<{
     id: string;
@@ -183,6 +196,47 @@ function mapBooking(b: ApiCustomerDetail["recent_bookings"][number]): CustomerBo
   };
 }
 
+function mapInvoiceStatus(status?: string | null): CustomerInvoice["status"] {
+  if (status === "paid") return "paid";
+  if (status === "cancelled") return "cancelled";
+  return "pending";
+}
+
+function mapInvoicePaymentType(
+  value?: string | null
+): CustomerInvoice["paymentType"] {
+  if (value === "installment" || value === "final" || value === "advance") return value;
+  return "advance";
+}
+
+function mapInvoice(
+  invoice: ApiCustomerDetail["recent_invoices"][number]
+): CustomerInvoice {
+  const amount = invoice.amount || 0;
+  return {
+    id: invoice.id,
+    invoiceNo: invoice.invoice_number,
+    invoiceDate: invoice.issued_at || "",
+    paymentType: mapInvoicePaymentType(invoice.invoice_type),
+    paymentMethod: invoice.payment_method || undefined,
+    amountReceived: amount,
+    remainingBalance: invoice.remaining_amount || 0,
+    status: mapInvoiceStatus(invoice.status),
+    transactionId: "",
+    gstAmount: invoice.gst_amount || 0,
+    bookingId: invoice.booking_number || "",
+    bookingRef: invoice.booking_id || "",
+    venueId: invoice.venue_id || "",
+    venueName: invoice.venue_name || "",
+    businessId: invoice.business_profile_id || "",
+    businessName: invoice.business_name || "",
+    bookingAmount: amount,
+    paymentStatus: invoice.payment_status || "pending",
+    invoiceAmount: amount,
+    amountPaid: invoice.paid_amount || amount,
+  };
+}
+
 function mapReview(r: ApiCustomerDetail["reviews"][number]): CustomerReview {
   return {
     id: r.id,
@@ -255,6 +309,7 @@ export function mapCustomerDetail(api: ApiCustomerDetail): Customer {
     version: "1",
     journey: [],
     recentBookings: (api.recent_bookings || []).map(mapBooking),
+    recentInvoices: (api.recent_invoices || []).map(mapInvoice),
     recentTransactions: [],
     recentReviews: (api.reviews || []).map(mapReview),
     activities: [],
@@ -299,6 +354,7 @@ export function mapCustomerListItem(api: ApiListItem): Customer {
     version: "1",
     journey: [],
     recentBookings: [],
+    recentInvoices: [],
     recentTransactions: [],
     recentReviews: [],
     activities: [],
@@ -406,12 +462,36 @@ export async function fetchCustomers(params: CustomerListParams = {}) {
   return apiRequest<CustomerListResponse>("/customers", { params: params as Record<string, string | number | null | undefined> });
 }
 
+/** Fetch all pages matching filters (capped) for export. */
+export async function fetchAllCustomersForExport(
+  filters: CustomerFilters,
+  sortKey: string,
+  sortDir: "asc" | "desc",
+  maxRows = 5000
+) {
+  const pageSize = 100;
+  let page = 1;
+  let totalPages = 1;
+  const items: Customer[] = [];
+
+  while (page <= totalPages && items.length < maxRows) {
+    const params = filtersToParams(filters, page, pageSize, sortKey, sortDir);
+    const data = await fetchCustomers(params);
+    items.push(...data.items.map(mapCustomerListItem));
+    totalPages = Math.max(1, data.total_pages);
+    if (!data.items.length) break;
+    page += 1;
+  }
+
+  return items.slice(0, maxRows);
+}
+
 export async function fetchCustomer(id: string) {
   return apiRequest<ApiCustomerDetail>(`/customers/${id}`);
 }
 
 export async function createCustomer(
-  payload: ReturnType<typeof formToCreatePayload> & Record<string, unknown>
+  payload: Partial<ReturnType<typeof formToCreatePayload>> & Record<string, unknown>
 ) {
   return apiRequest<CustomerMutationResponse>("/customers", {
     method: "POST",
@@ -426,6 +506,13 @@ export async function updateCustomer(
   return apiRequest<CustomerMutationResponse>(`/customers/${id}`, {
     method: "PUT",
     body: JSON.stringify(payload),
+  });
+}
+
+export async function updateCustomerStatus(id: string, status: CustomerStatus) {
+  return apiRequest<CustomerMutationResponse>(`/customers/${id}`, {
+    method: "PUT",
+    body: JSON.stringify({ status }),
   });
 }
 

@@ -286,7 +286,7 @@ class BookingRepository:
         )
         return list(result.scalars().unique().all())
 
-    async def list_recent_for_customer(self, customer_id: uuid.UUID, limit: int = 5) -> list[Booking]:
+    async def list_recent_for_customer(self, customer_id: uuid.UUID, limit: int = 50) -> list[Booking]:
         result = await self.db.execute(
             select(Booking)
             .options(*self._detail_options())
@@ -296,7 +296,7 @@ class BookingRepository:
         )
         return list(result.scalars().unique().all())
 
-    async def list_recent_for_vendor(self, vendor_id: uuid.UUID, limit: int = 5) -> list[Booking]:
+    async def list_recent_for_vendor(self, vendor_id: uuid.UUID, limit: int = 50) -> list[Booking]:
         result = await self.db.execute(
             select(Booking)
             .options(*self._detail_options())
@@ -307,16 +307,20 @@ class BookingRepository:
         return list(result.scalars().unique().all())
 
     async def list_recent_invoices_for_customer(
-        self, customer_id: uuid.UUID, limit: int = 5
+        self, customer_id: uuid.UUID, limit: int = 50
     ) -> list[Invoice]:
         result = await self.db.execute(
             select(Invoice)
             .join(Booking)
+            .options(
+                selectinload(Invoice.booking).selectinload(Booking.venue),
+                selectinload(Invoice.booking).selectinload(Booking.business_profile),
+            )
             .where(Booking.customer_id == customer_id, Booking.deleted_at.is_(None))
             .order_by(Invoice.created_at.desc())
             .limit(limit)
         )
-        return list(result.scalars().all())
+        return list(result.scalars().unique().all())
 
     async def has_duplicate(
         self,
@@ -356,6 +360,32 @@ class BookingRepository:
         if not include_deleted:
             stmt = stmt.where(*self._not_deleted())
         return int((await self.db.execute(stmt)).scalar_one() or 0)
+
+    async def stats_for_customers(
+        self, customer_ids: list[uuid.UUID]
+    ) -> dict[uuid.UUID, dict]:
+        """Batch booking count / spend / last event date for customer list rows."""
+        if not customer_ids:
+            return {}
+        stmt = (
+            select(
+                Booking.customer_id,
+                func.count(Booking.id).label("bookings"),
+                func.coalesce(func.sum(Booking.paid_amount), 0).label("lifetime_spend"),
+                func.max(Booking.start_date).label("last_booking_date"),
+            )
+            .where(Booking.customer_id.in_(customer_ids), *self._not_deleted())
+            .group_by(Booking.customer_id)
+        )
+        rows = (await self.db.execute(stmt)).all()
+        return {
+            row.customer_id: {
+                "bookings": int(row.bookings or 0),
+                "lifetime_spend": float(row.lifetime_spend or 0),
+                "last_booking_date": row.last_booking_date,
+            }
+            for row in rows
+        }
 
 
 def new_day(booking_id: uuid.UUID, event_date: date, status: str = "booked") -> BookingDay:

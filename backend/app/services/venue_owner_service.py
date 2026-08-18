@@ -119,8 +119,8 @@ class VenueOwnerService:
         self, owner: VenueOwner, *, existed: bool = False
     ) -> VenueOwnerDetailResponse:
         overview = await self._compute_overview(owner)
-        profiles = await self.business_profiles.list_by_venue_owner(owner.id, limit=20)
-        venues = await self.venues_repo.list_by_venue_owner(owner.id, limit=20)
+        profiles = await self.business_profiles.list_by_venue_owner(owner.id, limit=50)
+        venues = await self.venues_repo.list_by_venue_owner(owner.id, limit=50)
         return VenueOwnerDetailResponse(
             id=owner.id,
             owner_code=owner.owner_code,
@@ -393,17 +393,42 @@ class VenueOwnerService:
             status=payload.status,
         )
 
-        linked = await self.repo.get_by_user_id(user.id)
+        linked = await self.repo.get_by_user_id_any(user.id)
         if linked:
-            if payload.return_existing:
-                return VenueOwnerMutationResponse(
-                    message="Existing venue owner returned.",
-                    venue_owner=await self._to_detail(linked, existed=True),
-                    existed=True,
+            if linked.deleted_at is None and linked.status != VenueOwnerStatus.DELETED.value:
+                if payload.return_existing:
+                    return VenueOwnerMutationResponse(
+                        message="Existing venue owner returned.",
+                        venue_owner=await self._to_detail(linked, existed=True),
+                        existed=True,
+                    )
+                raise HTTPException(
+                    status_code=http_status.HTTP_409_CONFLICT,
+                    detail="Venue owner profile already exists for this user.",
                 )
-            raise HTTPException(
-                status_code=http_status.HTTP_409_CONFLICT,
-                detail="Venue owner profile already exists for this user.",
+            # Soft-deleted profile: restore and apply the new form values
+            restored = await self._restore_owner(linked, payload, actor=actor)
+            await self.db.commit()
+            await self.db.refresh(restored)
+            return VenueOwnerMutationResponse(
+                message="Venue owner restored successfully.",
+                venue_owner=await self._to_detail(restored),
+                existed=False,
+            )
+
+        # Soft-deleted by email/mobile but not linked to this user (edge case)
+        soft = await self.repo.find_by_email_any(payload.email) or await self.repo.find_by_mobile_any(
+            payload.mobile
+        )
+        if soft and (soft.deleted_at is not None or soft.status == VenueOwnerStatus.DELETED.value):
+            soft.user_id = user.id
+            restored = await self._restore_owner(soft, payload, actor=actor)
+            await self.db.commit()
+            await self.db.refresh(restored)
+            return VenueOwnerMutationResponse(
+                message="Venue owner restored successfully.",
+                venue_owner=await self._to_detail(restored),
+                existed=False,
             )
 
         owner = VenueOwner(
@@ -438,14 +463,64 @@ class VenueOwnerService:
             created_by=actor.id,
             updated_by=actor.id,
         )
-        owner = await self.repo.create(owner)
-        await self.db.commit()
-        await self.db.refresh(owner)
+        try:
+            owner = await self.repo.create(owner)
+            await self.db.commit()
+            await self.db.refresh(owner)
+        except Exception as exc:
+            await self.db.rollback()
+            # Surface unique conflicts as 409 instead of opaque 500 / failed fetch
+            if "uq_venue_owners_user_id" in str(exc) or "UniqueViolation" in type(exc).__name__:
+                raise HTTPException(
+                    status_code=http_status.HTTP_409_CONFLICT,
+                    detail="Venue owner profile already exists for this email or mobile.",
+                ) from exc
+            raise
         return VenueOwnerMutationResponse(
             message="Venue owner created successfully.",
             venue_owner=await self._to_detail(owner),
             existed=False,
         )
+
+    async def _restore_owner(
+        self,
+        owner: VenueOwner,
+        payload: VenueOwnerCreateRequest,
+        *,
+        actor: User,
+    ) -> VenueOwner:
+        first = payload.first_name or owner.first_name
+        last = payload.last_name if payload.last_name is not None else owner.last_name
+        owner.deleted_at = None
+        owner.first_name = first
+        owner.last_name = last or ""
+        owner.full_name = f"{first} {last or ''}".strip()
+        owner.email = payload.email
+        owner.mobile = payload.mobile
+        owner.alternate_mobile = payload.alternate_mobile
+        owner.gender = payload.gender
+        owner.date_of_birth = payload.date_of_birth
+        owner.profile_image = payload.profile_image
+        owner.business_name = payload.business_name
+        owner.business_type = payload.business_type
+        owner.registration_source = payload.registration_source
+        owner.verification_status = payload.verification_status
+        owner.status = payload.status if payload.status != "deleted" else "pending"
+        owner.address_line1 = payload.address_line1
+        owner.address_line2 = payload.address_line2
+        owner.city = payload.city
+        owner.state = payload.state
+        owner.country = payload.country
+        owner.postal_code = payload.postal_code
+        owner.gst_number = payload.gst_number
+        owner.pan_number = payload.pan_number
+        owner.business_registration_number = payload.business_registration_number
+        owner.website = payload.website
+        owner.description = payload.description
+        owner.updated_by = actor.id
+        await self._sync_user_from_owner(owner)
+        await self.db.flush()
+        return owner
 
     async def update_owner(
         self, actor: User, owner_id: uuid.UUID, payload: VenueOwnerUpdateRequest
@@ -533,9 +608,14 @@ class VenueOwnerService:
         registration_source: str = VenueOwnerRegistrationSource.WEBSITE.value,
         business_name: str | None = None,
     ) -> VenueOwner:
-        existing = await self.repo.get_by_user_id(user.id)
-        if existing:
-            return existing
+        any_existing = await self.repo.get_by_user_id_any(user.id)
+        if any_existing:
+            if any_existing.deleted_at is not None or any_existing.status == "deleted":
+                any_existing.deleted_at = None
+                if any_existing.status == "deleted":
+                    any_existing.status = "pending"
+                await self.db.flush()
+            return any_existing
 
         by_email = await self.repo.find_by_email(user.email)
         if by_email:

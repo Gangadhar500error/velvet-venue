@@ -25,6 +25,7 @@ export function RelationCard({
   children,
   actions,
   defaultOpen = true,
+  id,
 }: {
   icon: ComponentType<{ className?: string }>;
   title: string;
@@ -32,10 +33,11 @@ export function RelationCard({
   children: ReactNode;
   actions?: ReactNode;
   defaultOpen?: boolean;
+  id?: string;
 }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
-    <section className="bg-white border border-[#E8EAF0] rounded-[14px] overflow-hidden">
+    <section id={id} className="bg-white border border-[#E8EAF0] rounded-[14px] overflow-hidden scroll-mt-24">
       <div className="flex items-center gap-2 px-4 py-2.5 bg-[#FFF3EB]/60 border-b border-[#E8EAF0]">
         <button
           type="button"

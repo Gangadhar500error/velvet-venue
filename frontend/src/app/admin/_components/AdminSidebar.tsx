@@ -54,7 +54,10 @@ const ICON_MAP: Record<string, LucideIcon> = {
   Bell,
 };
 
-type NavItem = MenuItem & { iconComponent: LucideIcon };
+type NavItem = Omit<MenuItem, "children"> & {
+  iconComponent: LucideIcon;
+  children?: NavItem[];
+};
 
 function mapMenus(items: MenuItem[]): NavItem[] {
   return items.map((item) => ({

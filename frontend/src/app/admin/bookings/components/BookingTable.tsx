@@ -225,7 +225,7 @@ export function BookingTable({
                   {visibleColumns.event && (
                     <td className={`px-4 ${rowPad}`}>
                       <p className="text-sm font-medium text-[#111827]">{booking.eventType}</p>
-                      <p className="text-[12px] text-[#9CA3AF] truncate max-w-[140px]">Full Day</p>
+                      <p className="text-[12px] text-[#9CA3AF] truncate max-w-[140px]">{booking.slot || "Full Day"}</p>
                     </td>
                   )}
                   {visibleColumns.bookingDate && (

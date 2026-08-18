@@ -36,6 +36,29 @@ export interface CustomerTransaction {
   date: string;
 }
 
+export interface CustomerInvoice {
+  id: string;
+  invoiceNo: string;
+  invoiceDate: string;
+  paymentType: "advance" | "installment" | "final";
+  paymentMethod?: string;
+  amountReceived: number;
+  remainingBalance: number;
+  status: "paid" | "pending" | "cancelled";
+  transactionId: string;
+  gstAmount?: number;
+  bookingId: string;
+  bookingRef: string;
+  venueId: string;
+  venueName: string;
+  businessId: string;
+  businessName: string;
+  bookingAmount: number;
+  paymentStatus: string;
+  invoiceAmount: number;
+  amountPaid: number;
+}
+
 export interface CustomerReview {
   id: string;
   venue: string;
@@ -99,6 +122,7 @@ export interface Customer {
   version: string;
   journey: JourneyStep[];
   recentBookings: CustomerBooking[];
+  recentInvoices: CustomerInvoice[];
   recentTransactions: CustomerTransaction[];
   recentReviews: CustomerReview[];
   activities: CustomerActivity[];
@@ -140,7 +164,7 @@ export type CustomerColumnKey =
   | "registrationDate"
   | "verification"
   | "status"
-  | "lastLogin"
+  // | "lastLogin"
   | "actions";
 
 export interface CustomerFormValues {

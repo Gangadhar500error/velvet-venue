@@ -49,6 +49,44 @@ class DocumentInput(BaseModel):
     uploaded_date: date | None = None
 
 
+class BankAccountInput(BaseModel):
+    id: uuid.UUID | None = None
+    account_holder_name: str | None = None
+    bank_name: str | None = None
+    account_number: str | None = None
+    ifsc_code: str | None = None
+    cancelled_cheque_url: str | None = None
+    bank_proof_file_name: str | None = None
+    bank_proof_file_size: str | None = None
+    bank_proof_uploaded_date: date | None = None
+    is_primary: bool = False
+    sort_order: int = 0
+
+    @field_validator("ifsc_code")
+    @classmethod
+    def validate_ifsc(cls, value: str | None) -> str | None:
+        if value is None or not str(value).strip():
+            return None
+        cleaned = str(value).strip().upper()
+        if not IFSC_RE.match(cleaned):
+            raise ValueError("Invalid IFSC format.")
+        return cleaned
+
+    @field_validator(
+        "account_holder_name",
+        "bank_name",
+        "account_number",
+        "cancelled_cheque_url",
+        "bank_proof_file_name",
+        "bank_proof_file_size",
+    )
+    @classmethod
+    def normalize_optional(cls, value: str | None) -> str | None:
+        if value is None or not str(value).strip():
+            return None
+        return str(value).strip()
+
+
 class BusinessProfileCreateRequest(BaseModel):
     venue_owner_id: uuid.UUID
     business_name: str = Field(min_length=1, max_length=200)
@@ -81,6 +119,7 @@ class BusinessProfileCreateRequest(BaseModel):
     verification_notes: str | None = None
     status: StatusLiteral = "pending"
     documents: list[DocumentInput] = Field(default_factory=list)
+    bank_accounts: list[BankAccountInput] = Field(default_factory=list)
 
     @field_validator("business_name", "legal_business_name", "business_type")
     @classmethod
@@ -154,6 +193,7 @@ class BusinessProfileUpdateRequest(BaseModel):
     verification_notes: str | None = None
     status: StatusLiteral | None = None
     documents: list[DocumentInput] | None = None
+    bank_accounts: list[BankAccountInput] | None = None
 
     @field_validator("website")
     @classmethod
@@ -214,6 +254,11 @@ class BusinessProfileListItem(BaseModel):
     owner_email: str
     owner_phone: str
     gst_number: str | None = None
+    support_email: str | None = None
+    support_phone: str | None = None
+    address_line1: str | None = None
+    state: str | None = None
+    pan_number: str | None = None
     created_at: datetime
     total_venues: int = 0
     initials: str = ""
@@ -276,6 +321,20 @@ class DocumentResponse(BaseModel):
     uploaded_date: date | None = None
 
 
+class BankAccountResponse(BaseModel):
+    id: uuid.UUID
+    account_holder_name: str | None = None
+    bank_name: str | None = None
+    account_number: str | None = None
+    ifsc_code: str | None = None
+    cancelled_cheque_url: str | None = None
+    bank_proof_file_name: str | None = None
+    bank_proof_file_size: str | None = None
+    bank_proof_uploaded_date: date | None = None
+    is_primary: bool = False
+    sort_order: int = 0
+
+
 class BusinessProfileDetailResponse(BaseModel):
     success: bool = True
     id: uuid.UUID
@@ -323,6 +382,7 @@ class BusinessProfileDetailResponse(BaseModel):
     venues: list[VenueSummary] = Field(default_factory=list)
     recent_bookings: list[BookingSummary] = Field(default_factory=list)
     documents: list[DocumentResponse] = Field(default_factory=list)
+    bank_accounts: list[BankAccountResponse] = Field(default_factory=list)
 
 
 class BusinessProfileMutationResponse(BaseModel):

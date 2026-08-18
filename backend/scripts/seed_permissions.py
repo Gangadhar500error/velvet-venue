@@ -63,6 +63,8 @@ async def seed_role_permissions(session, perm_by_code: dict[str, Permission]) ->
         )
         role = result.scalar_one()
 
+        target_codes = set(codes)
+        role.permissions = [p for p in role.permissions if p.code in target_codes]
         assigned = {p.code for p in role.permissions}
         for code in codes:
             if code not in perm_by_code:

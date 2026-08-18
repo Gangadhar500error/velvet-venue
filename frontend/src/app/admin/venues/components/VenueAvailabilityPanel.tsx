@@ -50,6 +50,95 @@ interface VenueAvailabilityPanelProps {
   hideSummaryStats?: boolean;
   calendarPageMode?: boolean;
   bookActionLabel?: string;
+  loading?: boolean;
+}
+
+export function VenueAvailabilitySkeleton({
+  hideSummaryStats = false,
+  calendarPageMode = false,
+}: {
+  hideSummaryStats?: boolean;
+  calendarPageMode?: boolean;
+}) {
+  return (
+    <div className="space-y-3 animate-pulse">
+      {!hideSummaryStats && (
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+          {["Available Days", "Booked Days", "Completed Days", "Blocked Days", "Occupancy %"].map(
+            (label) => (
+              <div
+                key={label}
+                className="h-[72px] rounded-[12px] border border-[#E8EAF0] bg-white px-3 py-2 flex flex-col justify-center space-y-2"
+              >
+                <div className="h-3 w-20 bg-[#F3F4F6] rounded" />
+                <div className="h-5 w-10 bg-[#E5E7EB] rounded" />
+              </div>
+            )
+          )}
+        </div>
+      )}
+
+      <section className="bg-white border border-[#E8EAF0] rounded-[14px] overflow-hidden">
+        <div className="px-4 py-3 border-b border-[#E8EAF0] flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2.5">
+            <div className="w-5 h-5 rounded-md bg-[#F3F4F6]" />
+            <div className="space-y-1.5">
+              <div className="h-4 w-36 bg-[#E5E7EB] rounded" />
+              <div className="h-3 w-48 bg-[#F3F4F6] rounded" />
+            </div>
+          </div>
+          <div className="h-8 w-44 bg-[#F3F4F6] rounded-lg" />
+        </div>
+
+        <div className="p-4 space-y-4">
+          <div className="flex flex-wrap gap-2 items-center justify-between">
+            <div className="h-8 w-28 bg-[#F3F4F6] rounded-lg" />
+          </div>
+
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-1.5">
+              <div className="h-8 w-8 bg-[#F3F4F6] rounded-lg" />
+              <div className="h-5 w-32 bg-[#E5E7EB] rounded mx-1" />
+              <div className="h-8 w-8 bg-[#F3F4F6] rounded-lg" />
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="h-8 w-28 bg-[#F3F4F6] rounded-lg" />
+              <div className="h-8 w-14 bg-[#F3F4F6] rounded-lg" />
+            </div>
+          </div>
+
+          <div className="flex flex-wrap gap-x-4 gap-y-2 py-1">
+            {[1, 2, 3, 4, 5, 6, 7].map((i) => (
+              <div key={i} className="flex items-center gap-1.5">
+                <div className="w-3.5 h-3.5 rounded bg-[#F3F4F6]" />
+                <div className="h-3 w-16 bg-[#F3F4F6] rounded" />
+              </div>
+            ))}
+          </div>
+
+          <div className="grid grid-cols-7 gap-2">
+            {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => (
+              <div
+                key={d}
+                className="text-center text-[11px] font-semibold uppercase tracking-wide text-[#9CA3AF] py-1"
+              >
+                {d}
+              </div>
+            ))}
+            {Array.from({ length: 35 }).map((_, idx) => (
+              <div
+                key={idx}
+                className="min-h-[72px] rounded-xl border border-[#F3F4F6] bg-[#FAFAFB] p-2 space-y-2"
+              >
+                <div className="h-3 w-4 bg-[#E5E7EB] rounded" />
+                <div className="h-3.5 w-14 bg-[#E5E7EB]/60 rounded" />
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+    </div>
+  );
 }
 
 type SlotPick = { date: string; slotKey: string; slotName: string };
@@ -61,7 +150,16 @@ export function VenueAvailabilityPanel({
   onViewBooking,
   hideSummaryStats = false,
   calendarPageMode = false,
+  loading = false,
 }: VenueAvailabilityPanelProps) {
+  if (loading) {
+    return (
+      <VenueAvailabilitySkeleton
+        hideSummaryStats={hideSummaryStats}
+        calendarPageMode={calendarPageMode}
+      />
+    );
+  }
   const isSlotBased = normalizePricingMethod(venue.pricingMethod) === "slot_based";
 
   const today = toYmd(new Date());
@@ -227,7 +325,9 @@ export function VenueAvailabilityPanel({
       timeLabel: string;
       bookingCount: number;
       bookedSlots: string;
-      foodSlots: string;
+      availableSlots: string;
+      bookedFood: string;
+      availableFood: string;
       guestCount: number;
     }> = [];
     for (let d = 1; d <= count; d += 1) {
@@ -943,7 +1043,15 @@ export function VenueAvailabilityPanel({
             <Meta label="Venue" value={venue.name} />
             <Meta
               label="Booking Type"
-              value={venue.bookingModel === "venue_food" ? "Venue + Food" : "Venue Only"}
+              value={
+                venue.bookingTypes && venue.bookingTypes.length > 0
+                  ? venue.bookingTypes
+                      .map((t) => (t === "venue_food" ? "Venue + Food" : "Venue Only"))
+                      .join(", ")
+                  : venue.bookingModel === "venue_food"
+                  ? "Venue + Food"
+                  : "Venue Only"
+              }
             />
             <Meta label="Pricing Mode" value={isSlotBased ? "Slot Based" : "Full Day"} />
             <Meta label="Operating Hours" value={venue.operatingHours || "9 AM – 11 PM"} />

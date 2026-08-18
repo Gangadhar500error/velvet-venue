@@ -34,6 +34,23 @@ export interface BusinessDocument {
   verifiedBy: string;
   fileName?: string;
   fileSize?: string;
+  /** Public or blob URL used for View / Download */
+  fileUrl?: string;
+}
+
+export interface BusinessBankAccount {
+  /** Client temp id or server UUID */
+  id: string;
+  accountHolderName: string;
+  bankName: string;
+  accountNumber: string;
+  ifscCode: string;
+  bankProofFileName: string;
+  bankProofFileSize: string;
+  bankProofUploadedDate: string;
+  /** Public or blob URL for bank proof View / Download */
+  bankProofFileUrl?: string;
+  isPrimary: boolean;
 }
 
 export interface BusinessProfile {
@@ -68,6 +85,8 @@ export interface BusinessProfile {
   bankProofFileName: string;
   bankProofFileSize: string;
   bankProofUploadedDate: string;
+  bankProofFileUrl?: string;
+  bankAccounts: BusinessBankAccount[];
   notes: string;
   initials: string;
   status: BusinessStatus;
@@ -140,6 +159,7 @@ export interface BusinessProfileFormValues {
   bankProofFileName: string;
   bankProofFileSize: string;
   bankProofUploadedDate: string;
+  bankAccounts: BusinessBankAccount[];
   notes: string;
   status: BusinessStatus;
   verification: VerificationStatus;

@@ -107,9 +107,14 @@ export default function ViewBusinessProfilePage() {
       onDocumentsChange={setDocuments}
       onEdit={() => router.push(`/admin/business-profile/${business.id}/edit`)}
       onDelete={async () => {
+        const venueNote =
+          business.totalVenues > 0
+            ? `\n\nThis will also soft-delete ${business.totalVenues} linked venue(s).`
+            : "";
         const ok = await confirmAction({
           title: "Delete Business Profile?",
-          message: `Are you sure you want to delete ${business.businessName}?\n\nThis will soft-delete the business profile.`,
+          message: `Are you sure you want to delete ${business.businessName}?${venueNote}\n\nThis will soft-delete the business profile.`,
+          confirmLabel: "Delete",
         });
         if (!ok) return;
         try {

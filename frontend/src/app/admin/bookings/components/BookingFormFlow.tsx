@@ -2504,6 +2504,17 @@ function VenueDetailsCard({ venue }: { venue: Venue }) {
     .replace(/_/g, " ")
     .replace(/\b\w/g, (c) => c.toUpperCase());
 
+  const bookingTypesList =
+    venue.bookingTypes && venue.bookingTypes.length > 0
+      ? venue.bookingTypes
+      : venue.bookingModel === "venue_food"
+      ? ["venue_food"]
+      : ["venue_only"];
+
+  const bookingTypeLabel = bookingTypesList
+    .map((t) => (t === "venue_food" ? "Venue + Food" : "Venue Only"))
+    .join(", ");
+
   const rows: { label: string; value: string }[] = [
     { label: "Business Profile", value: venue.businessName || "—" },
     { label: "Venue Owner", value: venue.ownerName || "—" },
@@ -2516,16 +2527,16 @@ function VenueDetailsCard({ venue }: { venue: Venue }) {
       value: venue.seatingCapacity ? String(venue.seatingCapacity) : "—",
     },
     {
-      label: "Booking Model",
-      value: venue.bookingModel === "venue_food" ? "Venue + Food" : "Venue Only",
+      label: "Booking Type",
+      value: bookingTypeLabel,
     },
     {
       label: "Default Pricing",
-      value: "Full Day",
+      value: venue.pricingMethod === "slot_based" ? "Slot Based" : "Full Day",
     },
     {
-      label: "Minimum Online Booking Amount",
-      value: formatCurrency(venue.minOnlineBookingAmount || 0),
+      label: "Minimum Booking Percentage",
+      value: `${venue.advancePaymentPercent ?? 25}%`,
     },
     { label: "Status", value: statusLabelText || "—" },
   ];

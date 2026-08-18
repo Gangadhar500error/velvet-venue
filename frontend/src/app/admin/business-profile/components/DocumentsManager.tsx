@@ -10,11 +10,22 @@ import {
 } from "lucide-react";
 import { BusinessDocument, DocumentStatus } from "../types";
 import { formatDate } from "../data";
+import { notify, toast } from "../../_components/ui/Toast";
+import {
+  downloadUploadedFile,
+  mapDocumentFromUpload,
+  openUploadedFile,
+  uploadBusinessDocument,
+} from "@/lib/business-profiles";
 
 interface DocumentsManagerProps {
   documents: BusinessDocument[];
   onChange: (documents: BusinessDocument[]) => void;
   mode?: "create" | "edit" | "view";
+  /** When set, Replace/Upload stores the file on the server immediately. */
+  businessId?: string;
+  /** Create flow: keep raw Files so they can be uploaded after profile create. */
+  onPendingFile?: (docId: string, file: File) => void;
 }
 
 function formatBytes(bytes: number) {
@@ -31,24 +42,95 @@ function isOptional(name: string) {
   return name === "Trade License" || name === "Other Supporting Documents";
 }
 
+function mapUploadedDoc(
+  slot: BusinessDocument,
+  uploaded: ReturnType<typeof mapDocumentFromUpload>
+): BusinessDocument {
+  return {
+    ...slot,
+    ...uploaded,
+    // Keep stable slot id for local list keys when backend returns a new row.
+    id: slot.id.startsWith("doc-") || slot.id.startsWith("tmp-") ? uploaded.id : slot.id,
+    name: slot.name,
+  };
+}
+
 export function DocumentsManager({
   documents,
   onChange,
   mode = "edit",
+  businessId,
+  onPendingFile,
 }: DocumentsManagerProps) {
+  const [uploadingId, setUploadingId] = useState<string | null>(null);
+
   const updateDoc = (id: string, patch: Partial<BusinessDocument>) => {
     onChange(documents.map((d) => (d.id === id ? { ...d, ...patch } : d)));
   };
 
-  const handleFile = (doc: BusinessDocument, file: File | undefined) => {
+  const handleFile = async (doc: BusinessDocument, file: File | undefined) => {
     if (!file) return;
-    updateDoc(doc.id, {
+
+    const localPatch: Partial<BusinessDocument> = {
       status: "uploaded",
       fileName: file.name,
       fileSize: formatBytes(file.size),
       uploadedDate: todayISO(),
       verifiedBy: "—",
-    });
+      fileUrl: URL.createObjectURL(file),
+    };
+
+    if (businessId && businessId !== "new") {
+      setUploadingId(doc.id);
+      try {
+        const result = await uploadBusinessDocument(
+          businessId,
+          file,
+          doc.name,
+          doc.name
+        );
+        const mapped = mapDocumentFromUpload(result.document);
+        onChange(
+          documents.map((d) => (d.id === doc.id ? mapUploadedDoc(d, mapped) : d))
+        );
+        toast("Document uploaded.", "success");
+      } catch (err) {
+        notify.error(err instanceof Error ? err.message : "Failed to upload document");
+        // Keep local preview so View/Download still work until they retry save/upload.
+        updateDoc(doc.id, localPatch);
+        onPendingFile?.(doc.id, file);
+      } finally {
+        setUploadingId(null);
+      }
+      return;
+    }
+
+    onPendingFile?.(doc.id, file);
+    updateDoc(doc.id, localPatch);
+  };
+
+  const handleView = (doc: BusinessDocument) => {
+    try {
+      openUploadedFile(doc.fileUrl);
+    } catch (err) {
+      notify.error(
+        err instanceof Error
+          ? err.message
+          : "File is not available. Please replace or re-upload the document."
+      );
+    }
+  };
+
+  const handleDownload = async (doc: BusinessDocument) => {
+    try {
+      await downloadUploadedFile(doc.fileUrl, doc.fileName || doc.name);
+    } catch (err) {
+      notify.error(
+        err instanceof Error
+          ? err.message
+          : "File is not available. Please replace or re-upload the document."
+      );
+    }
   };
 
   if (documents.length === 0) {
@@ -79,7 +161,10 @@ export function DocumentsManager({
                 key={doc.id}
                 doc={doc}
                 mode={mode}
-                onFile={(file) => handleFile(doc, file)}
+                uploading={uploadingId === doc.id}
+                onFile={(file) => void handleFile(doc, file)}
+                onView={() => handleView(doc)}
+                onDownload={() => void handleDownload(doc)}
                 onVerify={() =>
                   updateDoc(doc.id, { status: "verified", verifiedBy: "Admin User" })
                 }
@@ -98,18 +183,24 @@ export function DocumentsManager({
 function DocumentTableRow({
   doc,
   mode,
+  uploading,
   onFile,
+  onView,
+  onDownload,
   onVerify,
 }: {
   doc: BusinessDocument;
   mode: "create" | "edit" | "view";
+  uploading: boolean;
   onFile: (file: File) => void;
+  onView: () => void;
+  onDownload: () => void;
   onVerify: () => void;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
   const hasFile = Boolean(doc.fileName);
-  const canManage = mode !== "view" || true;
+  const canManage = mode !== "view";
 
   return (
     <tr className="border-b border-[#F3F4F6] last:border-0 align-middle">
@@ -128,10 +219,12 @@ function DocumentTableRow({
             {hasFile ? (
               <p className="text-[12px] text-[#9CA3AF] truncate mt-0.5">
                 {[doc.fileName, doc.fileSize].filter(Boolean).join(" · ")}
+                {uploading ? " · Uploading…" : null}
               </p>
             ) : (
               <button
                 type="button"
+                disabled={uploading}
                 onClick={() => inputRef.current?.click()}
                 onDragEnter={(e) => {
                   e.preventDefault();
@@ -185,22 +278,20 @@ function DocumentTableRow({
       <td className="py-3">
         {hasFile ? (
           <div className="flex flex-wrap items-center gap-1.5">
-            <ActionBtn
-              icon={Eye}
-              label="View"
-              onClick={() => window.alert(`Viewing ${doc.fileName}`)}
-            />
+            <ActionBtn icon={Eye} label="View" onClick={onView} disabled={uploading} />
             <ActionBtn
               icon={Download}
               label="Download"
-              onClick={() => window.alert(`Downloading ${doc.fileName}`)}
+              onClick={onDownload}
+              disabled={uploading}
             />
-            {canManage && (
+            {(canManage || mode === "view") && (
               <ActionBtn
                 icon={Upload}
                 label="Replace"
                 tone="primary"
                 onClick={() => inputRef.current?.click()}
+                disabled={uploading}
               />
             )}
             {canManage && doc.status !== "verified" && (
@@ -209,6 +300,7 @@ function DocumentTableRow({
                 label="Verify"
                 tone="success"
                 onClick={onVerify}
+                disabled={uploading}
               />
             )}
           </div>
@@ -242,11 +334,13 @@ function ActionBtn({
   label,
   onClick,
   tone = "default",
+  disabled = false,
 }: {
   icon: typeof Eye;
   label: string;
   onClick: () => void;
   tone?: "default" | "primary" | "success";
+  disabled?: boolean;
 }) {
   const toneCls: Record<string, string> = {
     default:
@@ -261,7 +355,8 @@ function ActionBtn({
     <button
       type="button"
       onClick={onClick}
-      className={`inline-flex items-center gap-1 h-8 px-2.5 rounded-lg border text-[12px] font-medium transition-colors ${toneCls[tone]}`}
+      disabled={disabled}
+      className={`inline-flex items-center gap-1 h-8 px-2.5 rounded-lg border text-[12px] font-medium transition-colors disabled:opacity-50 disabled:pointer-events-none ${toneCls[tone]}`}
     >
       <Icon className="w-3.5 h-3.5" />
       {label}

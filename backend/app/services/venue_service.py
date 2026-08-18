@@ -175,6 +175,7 @@ class VenueService:
     def _to_list_item(self, venue: Venue) -> VenueListItem:
         profile = venue.business_profile
         owner = profile.venue_owner if profile else None
+        pricing = venue.active_pricing()
         return VenueListItem(
             id=venue.id,
             venue_code=venue.venue_code,
@@ -197,6 +198,10 @@ class VenueService:
             total_bookings=0,
             created_at=venue.created_at,
             initials=_initials(venue.venue_name),
+            booking_type=list(getattr(venue, "booking_type", None) or ["venue_only"]),
+            advance_percent=float(pricing.advance_percent) if pricing else 25.0,
+            gst_percent=float(pricing.gst_percent) if pricing else 18.0,
+            pricing_mode=pricing.pricing_mode if pricing else "full_day",
         )
 
     def _gallery_response(self, item: VenueGalleryItem) -> GalleryItemResponse:
@@ -501,6 +506,7 @@ class VenueService:
             refund_policy=venue.refund_policy,
             cover_image_url=venue.cover_image_url,
             video_url=venue.video_url,
+            booking_type=list(getattr(venue, "booking_type", None) or ["venue_only"]),
             created_at=venue.created_at,
             updated_at=venue.updated_at,
             created_by=venue.created_by,
@@ -743,6 +749,7 @@ class VenueService:
         venue_type: str | None = None,
         city: str | None = None,
         business_profile_id: uuid.UUID | None = None,
+        venue_owner_id: uuid.UUID | None = None,
         sort_by: str = "venue_name",
         sort_dir: str = "asc",
         page: int = 1,
@@ -758,7 +765,7 @@ class VenueService:
             venue_type=venue_type,
             city=city,
             business_profile_id=business_profile_id,
-            venue_owner_id=owner_id,
+            venue_owner_id=owner_id or venue_owner_id,
             published_only=published_only,
             sort_by=sort_by,
             sort_dir=sort_dir,
@@ -905,6 +912,7 @@ class VenueService:
             refund_policy=payload.refund_policy,
             cover_image_url=payload.cover_image_url,
             video_url=payload.video_url,
+            booking_type=list(payload.booking_type or ["venue_only"]),
             created_by=actor.id,
             updated_by=actor.id,
         )
@@ -973,6 +981,16 @@ class VenueService:
         )
         for key, value in data.items():
             setattr(venue, key, value)
+
+        if "booking_type" in data and payload.pricing is None:
+            preferred = (
+                "venue_food"
+                if "venue_food" in (data.get("booking_type") or [])
+                else "venue_only"
+            )
+            pricing = venue.active_pricing()
+            if pricing is not None:
+                pricing.pricing_type = preferred
 
         await self._sync_mappings(
             venue,
