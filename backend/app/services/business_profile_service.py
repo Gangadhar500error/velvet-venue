@@ -9,6 +9,7 @@ from app.core.storage import save_upload_file
 from app.models.business_profile import (
     BusinessDocumentStatus,
     BusinessProfile,
+    BusinessProfileBankAccount,
     BusinessProfileDocument,
     BusinessProfileStatus,
 )
@@ -18,6 +19,8 @@ from app.repositories.business_profile_repository import BusinessProfileReposito
 from app.repositories.venue_owner_repository import VenueOwnerRepository
 from app.repositories.venue_repository import VenueRepository
 from app.schemas.business_profile import (
+    BankAccountInput,
+    BankAccountResponse,
     BookingSummary,
     BusinessOverview,
     BusinessProfileCreateRequest,
@@ -116,6 +119,127 @@ class BusinessProfileService:
             uploaded_date=uploaded,
         )
 
+    def _active_bank_accounts(
+        self, profile: BusinessProfile
+    ) -> list[BusinessProfileBankAccount]:
+        rows = [b for b in (profile.bank_accounts or []) if b.deleted_at is None]
+        return sorted(rows, key=lambda b: (b.sort_order, str(b.id)))
+
+    def _bank_to_response(self, bank: BusinessProfileBankAccount) -> BankAccountResponse:
+        uploaded = bank.bank_proof_uploaded_at.date() if bank.bank_proof_uploaded_at else None
+        return BankAccountResponse(
+            id=bank.id,
+            account_holder_name=bank.account_holder_name,
+            bank_name=bank.bank_name,
+            account_number=bank.account_number,
+            ifsc_code=bank.ifsc_code,
+            cancelled_cheque_url=bank.cancelled_cheque_url,
+            bank_proof_file_name=bank.bank_proof_file_name,
+            bank_proof_file_size=bank.bank_proof_file_size,
+            bank_proof_uploaded_date=uploaded,
+            is_primary=bool(bank.is_primary),
+            sort_order=bank.sort_order or 0,
+        )
+
+    def _sync_primary_bank_fields(self, profile: BusinessProfile) -> None:
+        active = self._active_bank_accounts(profile)
+        primary = next((b for b in active if b.is_primary), None) or (active[0] if active else None)
+        if primary is None:
+            profile.account_holder_name = None
+            profile.bank_name = None
+            profile.account_number = None
+            profile.ifsc_code = None
+            profile.cancelled_cheque_url = None
+            profile.bank_proof_file_name = None
+            profile.bank_proof_file_size = None
+            profile.bank_proof_uploaded_at = None
+            return
+        for row in active:
+            row.is_primary = row.id == primary.id
+        profile.account_holder_name = primary.account_holder_name
+        profile.bank_name = primary.bank_name
+        profile.account_number = primary.account_number
+        profile.ifsc_code = primary.ifsc_code
+        profile.cancelled_cheque_url = primary.cancelled_cheque_url
+        profile.bank_proof_file_name = primary.bank_proof_file_name
+        profile.bank_proof_file_size = primary.bank_proof_file_size
+        profile.bank_proof_uploaded_at = primary.bank_proof_uploaded_at
+
+    def _apply_bank_account_inputs(
+        self, profile: BusinessProfile, banks: list[BankAccountInput]
+    ) -> None:
+        existing = {b.id: b for b in self._active_bank_accounts(profile)}
+        seen: set[uuid.UUID] = set()
+        meaningful = [
+            item
+            for item in banks
+            if any(
+                [
+                    item.account_holder_name,
+                    item.bank_name,
+                    item.account_number,
+                    item.ifsc_code,
+                    item.bank_proof_file_name,
+                ]
+            )
+        ]
+        if not meaningful and not existing:
+            self._sync_primary_bank_fields(profile)
+            return
+
+        # If client sent an empty list intentionally, soft-delete all.
+        if not banks:
+            for bank in existing.values():
+                bank.deleted_at = datetime.now(UTC)
+            self._sync_primary_bank_fields(profile)
+            return
+
+        has_primary = any(item.is_primary for item in meaningful)
+        for index, item in enumerate(meaningful):
+            uploaded_at = (
+                datetime.combine(item.bank_proof_uploaded_date, datetime.min.time()).replace(
+                    tzinfo=UTC
+                )
+                if item.bank_proof_uploaded_date
+                else None
+            )
+            is_primary = item.is_primary if has_primary else index == 0
+            if item.id and item.id in existing:
+                bank = existing[item.id]
+                seen.add(item.id)
+                bank.account_holder_name = item.account_holder_name
+                bank.bank_name = item.bank_name
+                bank.account_number = item.account_number
+                bank.ifsc_code = item.ifsc_code
+                bank.cancelled_cheque_url = item.cancelled_cheque_url
+                bank.bank_proof_file_name = item.bank_proof_file_name
+                bank.bank_proof_file_size = item.bank_proof_file_size
+                bank.bank_proof_uploaded_at = uploaded_at
+                bank.is_primary = is_primary
+                bank.sort_order = item.sort_order if item.sort_order else index
+                continue
+
+            profile.bank_accounts.append(
+                BusinessProfileBankAccount(
+                    account_holder_name=item.account_holder_name,
+                    bank_name=item.bank_name,
+                    account_number=item.account_number,
+                    ifsc_code=item.ifsc_code,
+                    cancelled_cheque_url=item.cancelled_cheque_url,
+                    bank_proof_file_name=item.bank_proof_file_name,
+                    bank_proof_file_size=item.bank_proof_file_size,
+                    bank_proof_uploaded_at=uploaded_at,
+                    is_primary=is_primary,
+                    sort_order=item.sort_order if item.sort_order else index,
+                )
+            )
+
+        for bank_id, bank in existing.items():
+            if bank_id not in seen:
+                bank.deleted_at = datetime.now(UTC)
+
+        self._sync_primary_bank_fields(profile)
+
     def _owner_fields(self, profile: BusinessProfile) -> tuple[str, str, str]:
         owner = profile.venue_owner
         if owner is None:
@@ -139,6 +263,11 @@ class BusinessProfileService:
             owner_email=owner_email,
             owner_phone=owner_phone,
             gst_number=profile.gst_number,
+            support_email=profile.support_email,
+            support_phone=profile.support_phone,
+            address_line1=profile.address_line1,
+            state=profile.state,
+            pan_number=profile.pan_number,
             created_at=profile.created_at,
             total_venues=total_venues,
             initials=_initials(profile.business_name),
@@ -171,6 +300,13 @@ class BusinessProfileService:
             for d in self._active_documents(profile)
             if d.deleted_at is None
         ]
+        bank_accounts = [
+            self._bank_to_response(b) for b in self._active_bank_accounts(profile)
+        ]
+        # Prefer primary bank account fields when child rows exist.
+        primary = next((b for b in bank_accounts if b.is_primary), None) or (
+            bank_accounts[0] if bank_accounts else None
+        )
         venue_rows = await self.venues.list_by_business_profile(profile.id, limit=50)
         return BusinessProfileDetailResponse(
             id=profile.id,
@@ -194,14 +330,26 @@ class BusinessProfileService:
             gst_number=profile.gst_number,
             pan_number=profile.pan_number,
             business_registration_number=profile.business_registration_number,
-            account_holder_name=profile.account_holder_name,
-            bank_name=profile.bank_name,
-            account_number=profile.account_number,
-            ifsc_code=profile.ifsc_code,
-            cancelled_cheque_url=profile.cancelled_cheque_url,
-            bank_proof_file_name=profile.bank_proof_file_name,
-            bank_proof_file_size=profile.bank_proof_file_size,
-            bank_proof_uploaded_date=bank_date,
+            account_holder_name=(
+                primary.account_holder_name if primary else profile.account_holder_name
+            ),
+            bank_name=primary.bank_name if primary else profile.bank_name,
+            account_number=primary.account_number if primary else profile.account_number,
+            ifsc_code=primary.ifsc_code if primary else profile.ifsc_code,
+            cancelled_cheque_url=(
+                primary.cancelled_cheque_url if primary else profile.cancelled_cheque_url
+            ),
+            bank_proof_file_name=(
+                primary.bank_proof_file_name if primary else profile.bank_proof_file_name
+            ),
+            bank_proof_file_size=(
+                primary.bank_proof_file_size if primary else profile.bank_proof_file_size
+            ),
+            bank_proof_uploaded_date=(
+                primary.bank_proof_uploaded_date
+                if primary
+                else bank_date
+            ),
             verification_status=profile.verification_status,
             verification_notes=profile.verification_notes,
             status=profile.status,
@@ -229,6 +377,7 @@ class BusinessProfileService:
             ],
             recent_bookings=[],
             documents=docs,
+            bank_accounts=bank_accounts,
         )
 
     async def _assert_no_legal_duplicates(
@@ -450,6 +599,7 @@ class BusinessProfileService:
             created_by=actor.id,
             updated_by=actor.id,
             documents=[],
+            bank_accounts=[],
         )
         if payload.documents:
             self._apply_document_inputs(profile, payload.documents)
@@ -462,6 +612,35 @@ class BusinessProfileService:
                         status=BusinessDocumentStatus.PENDING.value,
                     )
                 )
+
+        if payload.bank_accounts:
+            self._apply_bank_account_inputs(profile, payload.bank_accounts)
+        elif any(
+            [
+                payload.account_holder_name,
+                payload.bank_name,
+                payload.account_number,
+                payload.ifsc_code,
+                payload.bank_proof_file_name,
+            ]
+        ):
+            self._apply_bank_account_inputs(
+                profile,
+                [
+                    BankAccountInput(
+                        account_holder_name=payload.account_holder_name,
+                        bank_name=payload.bank_name,
+                        account_number=payload.account_number,
+                        ifsc_code=payload.ifsc_code,
+                        cancelled_cheque_url=payload.cancelled_cheque_url,
+                        bank_proof_file_name=payload.bank_proof_file_name,
+                        bank_proof_file_size=payload.bank_proof_file_size,
+                        bank_proof_uploaded_date=payload.bank_proof_uploaded_date,
+                        is_primary=True,
+                        sort_order=0,
+                    )
+                ],
+            )
 
         profile = await self.repo.create(profile)
         await self.db.commit()
@@ -486,7 +665,10 @@ class BusinessProfileService:
             )
         self._assert_access(actor, profile)
 
-        data = payload.model_dump(exclude_unset=True, exclude={"documents", "bank_proof_uploaded_date"})
+        data = payload.model_dump(
+            exclude_unset=True,
+            exclude={"documents", "bank_accounts", "bank_proof_uploaded_date"},
+        )
         await self._assert_no_legal_duplicates(
             tenant_id=profile.tenant_id,
             gst_number=data.get("gst_number", profile.gst_number),
@@ -517,6 +699,9 @@ class BusinessProfileService:
         if payload.documents is not None:
             self._apply_document_inputs(profile, payload.documents)
 
+        if payload.bank_accounts is not None:
+            self._apply_bank_account_inputs(profile, payload.bank_accounts)
+
         profile.updated_by = actor.id
         await self.db.commit()
         profile = await self.repo.get_by_id(profile.id)
@@ -537,13 +722,10 @@ class BusinessProfileService:
             )
         self._assert_access(actor, profile)
 
-        # Block delete if active venues are linked.
-        active_venues = await self.venues.count_by_business_profile(profile.id)
-        if active_venues > 0:
-            raise HTTPException(
-                status_code=http_status.HTTP_409_CONFLICT,
-                detail="Cannot delete a business profile with active venues.",
-            )
+        # Soft-delete linked venues first so the business profile can be removed.
+        linked_venues = await self.venues.list_by_business_profile(profile.id, limit=5000)
+        for venue in linked_venues:
+            await self.venues.soft_delete(venue, updated_by=actor.id)
 
         await self.repo.soft_delete(profile, updated_by=actor.id)
         await self.db.commit()
@@ -608,6 +790,27 @@ class BusinessProfileService:
             profile.bank_proof_file_name = file_name
             profile.bank_proof_file_size = file_size
             profile.bank_proof_uploaded_at = datetime.now(UTC)
+            primary_bank = next(
+                (
+                    b
+                    for b in getattr(profile, "bank_accounts", []) or []
+                    if getattr(b, "is_primary", False)
+                    and getattr(b, "deleted_at", None) is None
+                ),
+                None,
+            )
+            if primary_bank is None:
+                active_banks = [
+                    b
+                    for b in getattr(profile, "bank_accounts", []) or []
+                    if getattr(b, "deleted_at", None) is None
+                ]
+                primary_bank = active_banks[0] if active_banks else None
+            if primary_bank is not None:
+                primary_bank.cancelled_cheque_url = file_url
+                primary_bank.bank_proof_file_name = file_name
+                primary_bank.bank_proof_file_size = file_size
+                primary_bank.bank_proof_uploaded_at = datetime.now(UTC)
 
         profile.updated_by = actor.id
         await self.db.commit()

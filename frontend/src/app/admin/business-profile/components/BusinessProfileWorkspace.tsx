@@ -1,7 +1,7 @@
 "use client";
 
 import type { ComponentType, ReactNode } from "react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Building2,
   CalendarDays,
@@ -27,14 +27,22 @@ import { PageBreadcrumb } from "../../_components/ui/PageHeader";
 import { Button } from "../../_components/ui/Button";
 import { StatusBadge, VerificationBadge } from "../../_components/ui/StatusBadge";
 import {
+  BusinessBankAccount,
   BusinessDocument,
   BusinessProfile,
   BusinessProfileFormValues,
   BusinessStatus,
   VerificationStatus,
 } from "../types";
-import { cityOptions, formatDate, formatDateTime, isValidIfsc } from "../data";
+import { cityOptions, emptyBankAccount, formatCurrency, formatDate, formatDateTime, isValidIfsc } from "../data";
 import { DocumentsManager } from "./DocumentsManager";
+import { notify } from "../../_components/ui/Toast";
+import {
+  downloadUploadedFile,
+  mapDocumentFromUpload,
+  openUploadedFile,
+  uploadBusinessDocument,
+} from "@/lib/business-profiles";
 import {
   EntityLink,
   entityHref,
@@ -44,6 +52,8 @@ import {
 } from "../../_components/relations";
 import { EntityViewLayout } from "../../_components/layout/EntityViewLayout";
 import type { BusinessVenue } from "../types";
+import { fetchBookings, mapBookingListItem } from "@/lib/bookings";
+import type { Booking } from "@/app/admin/bookings/types";
 
 type TabKey = "overview" | "documents";
 
@@ -67,12 +77,16 @@ interface BusinessProfileWorkspaceProps {
   onEdit?: () => void;
   onCancel?: () => void;
   onSave?: () => void;
+  /** Create overview: validate + move to Documents (no API save). Return false to stay. */
+  onContinue?: () => boolean | void;
   onSaveDraft?: () => void;
   onDelete?: () => void;
   saving?: boolean;
   /** Breadcrumb label override (e.g. Create / Clone) */
   pageLabel?: string;
   ownerOptions?: OwnerSelectOption[];
+  /** Create flow: capture raw Files for post-create upload. */
+  onPendingDocumentFile?: (docId: string, file: File) => void;
 }
 
 const labelCls =
@@ -93,11 +107,13 @@ export function BusinessProfileWorkspace({
   onEdit,
   onCancel,
   onSave,
+  onContinue,
   onSaveDraft,
   onDelete,
   saving,
   pageLabel,
   ownerOptions = [],
+  onPendingDocumentFile,
 }: BusinessProfileWorkspaceProps) {
   const router = useRouter();
   const editable = (mode === "edit" || mode === "create") && !!form && !!onChange;
@@ -126,6 +142,32 @@ export function BusinessProfileWorkspace({
   const crumbLabel = pageLabel || businessName || (isCreate ? "Create Business Profile" : "Business Profile");
 
   const relatedVenues = business.venues || [];
+  const [relatedBookings, setRelatedBookings] = useState<Booking[]>([]);
+
+  useEffect(() => {
+    if (isCreate || !business.id || business.id === "new") {
+      setRelatedBookings([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await fetchBookings({
+          business_profile_id: business.id,
+          page: 1,
+          page_size: 50,
+          sort_by: "created_at",
+          sort_dir: "desc",
+        });
+        if (!cancelled) setRelatedBookings(data.items.map(mapBookingListItem));
+      } catch {
+        if (!cancelled) setRelatedBookings([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [business.id, isCreate]);
 
   const handleOwnerSelect = (ownerId: string) => {
     if (!onChange) return;
@@ -136,7 +178,12 @@ export function BusinessProfileWorkspace({
     onChange("ownerPhone", owner?.phone || "");
   };
 
-  const syncBankProofDocument = (fileName: string, fileSize: string, uploadedDate: string) => {
+  const syncBankProofDocument = (
+    fileName: string,
+    fileSize: string,
+    uploadedDate: string,
+    fileUrl?: string
+  ) => {
     const next = documents.map((d) =>
       d.name === "Cancelled Cheque / Bank Proof"
         ? {
@@ -146,6 +193,7 @@ export function BusinessProfileWorkspace({
             fileSize,
             uploadedDate,
             verifiedBy: "—",
+            fileUrl: fileUrl || d.fileUrl,
           }
         : d
     );
@@ -162,21 +210,84 @@ export function BusinessProfileWorkspace({
             fileSize: undefined,
             uploadedDate: "",
             verifiedBy: "—",
+            fileUrl: undefined,
           }
         : d
     );
     handleDocumentsChange(next);
   };
 
-  const accountHolderName = editable ? form!.accountHolderName : business.accountHolderName;
-  const bankName = editable ? form!.bankName : business.bankName;
-  const accountNumber = editable ? form!.accountNumber : business.accountNumber;
-  const ifscCode = editable ? form!.ifscCode : business.ifscCode;
-  const bankProofFileName = editable ? form!.bankProofFileName : business.bankProofFileName;
-  const bankProofFileSize = editable ? form!.bankProofFileSize : business.bankProofFileSize;
-  const bankProofUploadedDate = editable
-    ? form!.bankProofUploadedDate
-    : business.bankProofUploadedDate;
+  const bankAccounts: BusinessBankAccount[] = editable
+    ? form!.bankAccounts?.length
+      ? form!.bankAccounts
+      : [emptyBankAccount(true)]
+    : business.bankAccounts?.length
+      ? business.bankAccounts
+      : business.accountHolderName || business.bankName || business.accountNumber
+        ? [
+            {
+              id: `view-${business.id}`,
+              accountHolderName: business.accountHolderName || "",
+              bankName: business.bankName || "",
+              accountNumber: business.accountNumber || "",
+              ifscCode: business.ifscCode || "",
+              bankProofFileName: business.bankProofFileName || "",
+              bankProofFileSize: business.bankProofFileSize || "",
+              bankProofUploadedDate: business.bankProofUploadedDate || "",
+              bankProofFileUrl: business.bankProofFileUrl,
+              isPrimary: true,
+            },
+          ]
+        : [];
+
+  const syncPrimaryFlatFields = (accounts: BusinessBankAccount[]) => {
+    if (!onChange) return;
+    const primary = accounts.find((b) => b.isPrimary) || accounts[0];
+    onChange("accountHolderName", primary?.accountHolderName || "");
+    onChange("bankName", primary?.bankName || "");
+    onChange("accountNumber", primary?.accountNumber || "");
+    onChange("ifscCode", primary?.ifscCode || "");
+    onChange("bankProofFileName", primary?.bankProofFileName || "");
+    onChange("bankProofFileSize", primary?.bankProofFileSize || "");
+    onChange("bankProofUploadedDate", primary?.bankProofUploadedDate || "");
+  };
+
+  const updateBankAccounts = (accounts: BusinessBankAccount[]) => {
+    if (!onChange) return;
+    const normalized = accounts.map((b, index) => ({
+      ...b,
+      isPrimary: accounts.some((x) => x.isPrimary) ? b.isPrimary : index === 0,
+    }));
+    onChange("bankAccounts", normalized);
+    syncPrimaryFlatFields(normalized);
+  };
+
+  const updateBankField = <K extends keyof BusinessBankAccount>(
+    bankId: string,
+    key: K,
+    value: BusinessBankAccount[K]
+  ) => {
+    updateBankAccounts(
+      bankAccounts.map((b) => (b.id === bankId ? { ...b, [key]: value } : b))
+    );
+  };
+
+  const addBankAccount = () => {
+    updateBankAccounts([...bankAccounts, emptyBankAccount(bankAccounts.length === 0)]);
+  };
+
+  const removeBankAccount = (bankId: string) => {
+    if (bankAccounts.length <= 1) {
+      updateBankAccounts([emptyBankAccount(true)]);
+      clearBankProofDocument();
+      return;
+    }
+    const next = bankAccounts.filter((b) => b.id !== bankId);
+    if (!next.some((b) => b.isPrimary) && next[0]) {
+      next[0] = { ...next[0], isPrimary: true };
+    }
+    updateBankAccounts(next);
+  };
 
   return (
     <div className="flex flex-col gap-3 animate-fadeIn pb-6">
@@ -539,80 +650,199 @@ export function BusinessProfileWorkspace({
                     <CollapsibleCard
                       icon={CreditCard}
                       title="Bank Details"
-                      subtitle="Registered account for platform settlements and payouts"
+                      subtitle="Registered accounts for platform settlements and payouts"
                       defaultOpen
                     >
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-10 gap-y-2">
-                        <InfoField
-                          label="Account Holder Name"
-                          required
-                          value={accountHolderName || ""}
-                          editable={editable}
-                          onChange={(v) => onChange?.("accountHolderName", v.slice(0, 150))}
-                        />
-                        <InfoField
-                          label="Bank Name"
-                          required
-                          value={bankName || ""}
-                          editable={editable}
-                          onChange={(v) => onChange?.("bankName", v.slice(0, 150))}
-                        />
-                        <InfoField
-                          label="Account Number"
-                          required
-                          value={accountNumber || ""}
-                          editable={editable}
-                          onChange={(v) =>
-                            onChange?.("accountNumber", v.replace(/\D/g, ""))
-                          }
-                        />
-                        <div>
-                          <InfoField
-                            label="IFSC Code"
-                            required
-                            value={ifscCode || ""}
-                            editable={editable}
-                            onChange={(v) =>
-                              onChange?.("ifscCode", v.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 11))
-                            }
-                          />
-                          {editable && form!.ifscCode && !isValidIfsc(form!.ifscCode) && (
-                            <p className="mt-1 ml-[136px] sm:ml-[150px] text-[11px] text-[#DC2626]">
-                              Enter a valid IFSC (e.g. HDFC0001234)
-                            </p>
-                          )}
-                        </div>
-                      </div>
+                      <div className="space-y-4">
+                        {bankAccounts.map((bank, index) => (
+                          <div
+                            key={bank.id}
+                            className="rounded-[12px] border border-[#E8EAF0] bg-[#FCFCFD] p-3.5 sm:p-4"
+                          >
+                            <div className="mb-3 flex items-center justify-between gap-2">
+                              <div className="flex items-center gap-2 min-w-0">
+                                <p className="text-sm font-semibold text-[#111827]">
+                                  Bank Account {index + 1}
+                                </p>
+                                {bank.isPrimary && (
+                                  <span className="inline-flex items-center rounded-full bg-[#FFF3EB] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[#C89B3C]">
+                                    Primary
+                                  </span>
+                                )}
+                              </div>
+                              {editable && bankAccounts.length > 1 && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  icon={Trash2}
+                                  onClick={() => removeBankAccount(bank.id)}
+                                  className="!text-[#DC2626] hover:!bg-[#FEF2F2]"
+                                >
+                                  Remove
+                                </Button>
+                              )}
+                            </div>
 
-                      <div className="mt-4 pt-3 border-t border-[#F3F4F6]">
-                        <p className={`${labelCls} mb-2 w-auto after:content-none`}>
-                          Cancelled Cheque / Bank Proof
-                        </p>
-                        <BankProofUpload
-                          fileName={bankProofFileName}
-                          fileSize={bankProofFileSize}
-                          uploadedDate={bankProofUploadedDate}
-                          editable={editable}
-                          onUpload={(file) => {
-                            if (!onChange) return;
-                            const size =
-                              file.size < 1024 * 1024
-                                ? `${(file.size / 1024).toFixed(0)} KB`
-                                : `${(file.size / (1024 * 1024)).toFixed(1)} MB`;
-                            const date = new Date().toISOString().slice(0, 10);
-                            onChange("bankProofFileName", file.name);
-                            onChange("bankProofFileSize", size);
-                            onChange("bankProofUploadedDate", date);
-                            syncBankProofDocument(file.name, size, date);
-                          }}
-                          onClear={() => {
-                            if (!onChange) return;
-                            onChange("bankProofFileName", "");
-                            onChange("bankProofFileSize", "");
-                            onChange("bankProofUploadedDate", "");
-                            clearBankProofDocument();
-                          }}
-                        />
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-10 gap-y-2">
+                              <InfoField
+                                label="Account Holder Name"
+                                required
+                                value={bank.accountHolderName || ""}
+                                editable={editable}
+                                onChange={(v) =>
+                                  updateBankField(bank.id, "accountHolderName", v.slice(0, 150))
+                                }
+                              />
+                              <InfoField
+                                label="Bank Name"
+                                required
+                                value={bank.bankName || ""}
+                                editable={editable}
+                                onChange={(v) =>
+                                  updateBankField(bank.id, "bankName", v.slice(0, 150))
+                                }
+                              />
+                              <InfoField
+                                label="Account Number"
+                                required
+                                value={bank.accountNumber || ""}
+                                editable={editable}
+                                onChange={(v) =>
+                                  updateBankField(
+                                    bank.id,
+                                    "accountNumber",
+                                    v.replace(/\D/g, "")
+                                  )
+                                }
+                              />
+                              <div>
+                                <InfoField
+                                  label="IFSC Code"
+                                  required
+                                  value={bank.ifscCode || ""}
+                                  editable={editable}
+                                  onChange={(v) =>
+                                    updateBankField(
+                                      bank.id,
+                                      "ifscCode",
+                                      v.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 11)
+                                    )
+                                  }
+                                />
+                                {editable && bank.ifscCode && !isValidIfsc(bank.ifscCode) && (
+                                  <p className="mt-1 ml-[136px] sm:ml-[150px] text-[11px] text-[#DC2626]">
+                                    Enter a valid IFSC (e.g. HDFC0001234)
+                                  </p>
+                                )}
+                              </div>
+                            </div>
+
+                            <div className="mt-4 pt-3 border-t border-[#F3F4F6]">
+                              <p className={`${labelCls} mb-2 w-auto after:content-none`}>
+                                Cancelled Cheque / Bank Proof
+                              </p>
+                              <BankProofUpload
+                                fileName={bank.bankProofFileName}
+                                fileSize={bank.bankProofFileSize}
+                                uploadedDate={bank.bankProofUploadedDate}
+                                fileUrl={
+                                  bank.bankProofFileUrl ||
+                                  (bank.isPrimary || index === 0
+                                    ? business.bankProofFileUrl ||
+                                      documents.find((d) => d.name === "Cancelled Cheque / Bank Proof")
+                                        ?.fileUrl
+                                    : undefined)
+                                }
+                                editable={editable}
+                                onUpload={(file) => {
+                                  const size =
+                                    file.size < 1024 * 1024
+                                      ? `${(file.size / 1024).toFixed(0)} KB`
+                                      : `${(file.size / (1024 * 1024)).toFixed(1)} MB`;
+                                  const date = new Date().toISOString().slice(0, 10);
+                                  const blobUrl = URL.createObjectURL(file);
+                                  const applyLocal = (fileUrl?: string) => {
+                                    updateBankAccounts(
+                                      bankAccounts.map((b) =>
+                                        b.id === bank.id
+                                          ? {
+                                              ...b,
+                                              bankProofFileName: file.name,
+                                              bankProofFileSize: size,
+                                              bankProofUploadedDate: date,
+                                              bankProofFileUrl: fileUrl || blobUrl,
+                                            }
+                                          : b
+                                      )
+                                    );
+                                    if (bank.isPrimary || index === 0) {
+                                      syncBankProofDocument(
+                                        file.name,
+                                        size,
+                                        date,
+                                        fileUrl || blobUrl
+                                      );
+                                    }
+                                  };
+
+                                  const profileId =
+                                    !isCreate && business.id && business.id !== "new"
+                                      ? business.id
+                                      : undefined;
+                                  if (profileId) {
+                                    void (async () => {
+                                      try {
+                                        const result = await uploadBusinessDocument(
+                                          profileId,
+                                          file,
+                                          "Cancelled Cheque / Bank Proof",
+                                          "Cancelled Cheque / Bank Proof"
+                                        );
+                                        const mapped = mapDocumentFromUpload(result.document);
+                                        applyLocal(mapped.fileUrl);
+                                      } catch {
+                                        applyLocal(blobUrl);
+                                      }
+                                    })();
+                                  } else {
+                                    applyLocal(blobUrl);
+                                  }
+                                }}
+                                onClear={() => {
+                                  updateBankAccounts(
+                                    bankAccounts.map((b) =>
+                                      b.id === bank.id
+                                        ? {
+                                            ...b,
+                                            bankProofFileName: "",
+                                            bankProofFileSize: "",
+                                            bankProofUploadedDate: "",
+                                            bankProofFileUrl: undefined,
+                                          }
+                                        : b
+                                    )
+                                  );
+                                  if (bank.isPrimary || index === 0) {
+                                    clearBankProofDocument();
+                                  }
+                                }}
+                              />
+                            </div>
+                          </div>
+                        ))}
+
+                        {editable && (
+                          <div className="pt-1">
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              icon={Plus}
+                              onClick={addBankAccount}
+                            >
+                              Add New Bank Account
+                            </Button>
+                          </div>
+                        )}
                       </div>
                     </CollapsibleCard>
 
@@ -634,7 +864,18 @@ export function BusinessProfileWorkspace({
                       isCreate={isCreate}
                       saving={saving}
                       onCancel={onCancel}
-                      onSave={onSave}
+                      primaryLabel={
+                        isCreate ? "Save and Continue" : "Update Business Profile"
+                      }
+                      onPrimary={() => {
+                        if (isCreate) {
+                          const ok = onContinue?.();
+                          if (ok === false) return;
+                          setTab("documents");
+                          return;
+                        }
+                        onSave?.();
+                      }}
                       onSaveDraft={onSaveDraft}
                     />
                   )}
@@ -645,45 +886,73 @@ export function BusinessProfileWorkspace({
               !isCreate ? (
                 <>
                   <RelationCard
+                    id="business-venues"
                     icon={LayoutGrid}
                     title="Venue List"
                     subtitle="All venues under this business profile"
                     defaultOpen
-                    actions={<ViewAllButton href="/admin/venues" label="View All" />}
+                    actions={
+                      <ViewAllButton
+                        href={`/admin/venues?businessId=${business.id}`}
+                        label="View All"
+                      />
+                    }
                   >
                     <BusinessVenuesTable venues={relatedVenues} />
                   </RelationCard>
 
                   <RelationCard
+                    id="business-bookings"
                     icon={CalendarDays}
                     title="Bookings"
                     subtitle="Bookings from all venues under this business"
                     defaultOpen
-                    actions={<ViewAllButton href="/admin/bookings" label="View All Bookings" />}
+                    actions={
+                      <ViewAllButton
+                        href={`/admin/bookings?business=${business.id}`}
+                        label="View All Bookings"
+                      />
+                    }
                   >
-                    <RelationEmpty icon={CalendarDays} text="No Bookings Found" />
+                    <BusinessBookingsTable bookings={relatedBookings} />
                   </RelationCard>
                 </>
               ) : undefined
             }
           />
         ) : (
-          <CollapsibleCard
-            icon={FileText}
-            title="Documents"
-            subtitle={
-              editable
-                ? "Upload and manage verification documents for this business"
-                : "Verification documents on file"
-            }
-            defaultOpen
-          >
-            <DocumentsManager
-              documents={documents}
-              onChange={handleDocumentsChange}
-              mode={mode}
-            />
-          </CollapsibleCard>
+          <div className="relative">
+            <CollapsibleCard
+              icon={FileText}
+              title="Documents"
+              subtitle={
+                editable
+                  ? "Upload and manage verification documents for this business"
+                  : "Verification documents on file"
+              }
+              defaultOpen
+            >
+              <DocumentsManager
+                documents={documents}
+                onChange={handleDocumentsChange}
+                mode={mode}
+                businessId={isCreate || !business.id || business.id === "new" ? undefined : business.id}
+                onPendingFile={onPendingDocumentFile}
+              />
+            </CollapsibleCard>
+            {editable && (
+              <FormActionBar
+                isCreate={isCreate}
+                saving={saving}
+                onCancel={onCancel}
+                secondaryLabel={isCreate ? "Back to Overview" : undefined}
+                onSecondary={isCreate ? () => setTab("overview") : undefined}
+                primaryLabel={isCreate ? "Save Business Profile" : "Update Business Profile"}
+                onPrimary={onSave}
+                onSaveDraft={onSaveDraft}
+              />
+            )}
+          </div>
         )}
       </div>
     </div>
@@ -694,13 +963,19 @@ function FormActionBar({
   isCreate,
   saving,
   onCancel,
-  onSave,
+  primaryLabel,
+  onPrimary,
+  secondaryLabel,
+  onSecondary,
   onSaveDraft,
 }: {
   isCreate: boolean;
   saving?: boolean;
   onCancel?: () => void;
-  onSave?: () => void;
+  primaryLabel: string;
+  onPrimary?: () => void;
+  secondaryLabel?: string;
+  onSecondary?: () => void;
   onSaveDraft?: () => void;
 }) {
   return (
@@ -709,13 +984,18 @@ function FormActionBar({
         <Button variant="ghost" onClick={onCancel} disabled={saving}>
           Cancel
         </Button>
+        {secondaryLabel && onSecondary && (
+          <Button variant="secondary" onClick={onSecondary} disabled={saving}>
+            {secondaryLabel}
+          </Button>
+        )}
         {isCreate && onSaveDraft && (
           <Button variant="secondary" onClick={onSaveDraft} disabled={saving}>
             Save Draft
           </Button>
         )}
-        <Button variant="primary" onClick={onSave} loading={saving}>
-          {isCreate ? "Save Business Profile" : "Update Business Profile"}
+        <Button variant="primary" onClick={onPrimary} loading={saving}>
+          {primaryLabel}
         </Button>
       </div>
     </div>
@@ -726,6 +1006,7 @@ function BankProofUpload({
   fileName,
   fileSize,
   uploadedDate,
+  fileUrl,
   editable,
   onUpload,
   onClear,
@@ -733,6 +1014,7 @@ function BankProofUpload({
   fileName?: string;
   fileSize?: string;
   uploadedDate?: string;
+  fileUrl?: string;
   editable: boolean;
   onUpload: (file: File) => void;
   onClear: () => void;
@@ -740,6 +1022,30 @@ function BankProofUpload({
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
   const hasFile = Boolean(fileName);
+
+  const handleView = () => {
+    try {
+      openUploadedFile(fileUrl);
+    } catch (err) {
+      notify.error(
+        err instanceof Error
+          ? err.message
+          : "File is not available. Please replace or re-upload the document."
+      );
+    }
+  };
+
+  const handleDownload = async () => {
+    try {
+      await downloadUploadedFile(fileUrl, fileName || "bank-proof");
+    } catch (err) {
+      notify.error(
+        err instanceof Error
+          ? err.message
+          : "File is not available. Please replace or re-upload the document."
+      );
+    }
+  };
 
   return (
     <div>
@@ -809,14 +1115,14 @@ function BankProofUpload({
               <div className="mt-2 flex flex-wrap gap-1.5">
                 <button
                   type="button"
-                  onClick={() => window.alert(`Viewing ${fileName}`)}
+                  onClick={handleView}
                   className="inline-flex items-center gap-1 h-8 px-2.5 rounded-lg border border-[#E8EAF0] text-[12px] font-medium text-[#4B5563] hover:border-[#FFD4B0] hover:text-[#C89B3C]"
                 >
                   <Eye className="w-3.5 h-3.5" /> View
                 </button>
                 <button
                   type="button"
-                  onClick={() => window.alert(`Downloading ${fileName}`)}
+                  onClick={() => void handleDownload()}
                   className="inline-flex items-center gap-1 h-8 px-2.5 rounded-lg border border-[#E8EAF0] text-[12px] font-medium text-[#4B5563] hover:border-[#FFD4B0] hover:text-[#C89B3C]"
                 >
                   <Download className="w-3.5 h-3.5" /> Download
@@ -1079,6 +1385,41 @@ function BusinessVenuesTable({ venues }: { venues: BusinessVenue[] }) {
               <td className="py-2.5 pr-3 text-[#4B5563]">{v.category || "—"}</td>
               <td className="py-2.5 pr-3 text-[#4B5563]">{v.city || "—"}</td>
               <td className="py-2.5 pr-3 capitalize text-[#4B5563]">{v.status}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function BusinessBookingsTable({ bookings }: { bookings: Booking[] }) {
+  if (bookings.length === 0) {
+    return <RelationEmpty icon={CalendarDays} text="No Bookings Found" />;
+  }
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full min-w-[760px] text-sm">
+        <thead>
+          <tr className="border-b border-[#E8EAF0] text-left text-[11px] uppercase tracking-wider text-[#6B7280]">
+            {["Booking ID", "Customer", "Venue", "Event Date", "Amount", "Status"].map((h) => (
+              <th key={h} className="pb-2.5 pr-3 font-semibold whitespace-nowrap">
+                {h}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {bookings.map((b) => (
+            <tr key={b.id} className="border-b border-[#F3F4F6] last:border-0">
+              <td className="py-2.5 pr-3 whitespace-nowrap">
+                <EntityLink href={entityHref.booking(b.id)}>{b.bookingId}</EntityLink>
+              </td>
+              <td className="py-2.5 pr-3 text-[#4B5563]">{b.customerName || "—"}</td>
+              <td className="py-2.5 pr-3 text-[#4B5563]">{b.venueName || "—"}</td>
+              <td className="py-2.5 pr-3 text-[#4B5563]">{b.eventDate ? formatDate(b.eventDate) : "—"}</td>
+              <td className="py-2.5 pr-3 text-[#4B5563]">{formatCurrency(b.bookingAmount || 0)}</td>
+              <td className="py-2.5 pr-3 capitalize text-[#4B5563]">{b.bookingStatus}</td>
             </tr>
           ))}
         </tbody>

@@ -935,6 +935,13 @@ export function getVenueBookingTypeSupport(venue: Venue | undefined): {
 } {
   if (!venue) return { venueOnly: true, venueFood: true };
 
+  if (Array.isArray(venue.bookingTypes) && venue.bookingTypes.length > 0) {
+    return {
+      venueOnly: venue.bookingTypes.includes("venue_only"),
+      venueFood: venue.bookingTypes.includes("venue_food"),
+    };
+  }
+
   const venueModel = venue.pricingMethod || "full_day";
   const hasFullDay =
     (Number(findPricingSlot(venue, "full_day")?.price) || 0) > 0 ||

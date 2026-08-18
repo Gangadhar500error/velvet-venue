@@ -29,6 +29,26 @@ class VenueOwnerRepository:
         )
         return result.scalar_one_or_none()
 
+    async def get_by_user_id_any(self, user_id: uuid.UUID) -> VenueOwner | None:
+        """Include soft-deleted rows (needed to restore / avoid unique user_id conflicts)."""
+        result = await self.db.execute(
+            select(VenueOwner).where(VenueOwner.user_id == user_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def find_by_email_any(self, email: str) -> VenueOwner | None:
+        result = await self.db.execute(
+            select(VenueOwner).where(func.lower(VenueOwner.email) == email.lower().strip())
+        )
+        return result.scalar_one_or_none()
+
+    async def find_by_mobile_any(self, mobile: str) -> VenueOwner | None:
+        cleaned = "".join(ch for ch in mobile if ch.isdigit() or ch == "+")
+        result = await self.db.execute(
+            select(VenueOwner).where(VenueOwner.mobile == cleaned)
+        )
+        return result.scalar_one_or_none()
+
     async def get_by_code(self, owner_code: str) -> VenueOwner | None:
         result = await self.db.execute(
             select(VenueOwner).where(

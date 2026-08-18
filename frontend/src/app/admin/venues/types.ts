@@ -107,6 +107,7 @@ export interface VenueDocument {
   fileName?: string;
   fileSize?: string;
   expiryDate?: string;
+  fileUrl?: string;
 }
 
 export interface AvailabilityDayBooking {
@@ -202,6 +203,8 @@ export interface Venue {
   cleaningCharges: number;
 
   bookingModel: BookingModel;
+  /** Multi-select offerings stored in venues.booking_type */
+  bookingTypes: BookingModel[];
   /** Venue Only pricing model: Full Day or Slot Based */
   pricingMethod: PricingMethod;
   /** Venue + Food is always meal-slot based (no model selector) */
@@ -363,6 +366,8 @@ export interface VenueFormValues {
   cleaningCharges: string;
 
   bookingModel: BookingModel;
+  /** Multi-select offerings stored in venues.booking_type */
+  bookingTypes: BookingModel[];
   /** Venue Only pricing model: Full Day or Slot Based */
   pricingMethod: PricingMethod;
   /** Venue + Food is always meal-slot based (no model selector) */

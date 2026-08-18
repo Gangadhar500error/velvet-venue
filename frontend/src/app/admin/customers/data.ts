@@ -217,6 +217,7 @@ function enrich(
     Customer,
     | "journey"
     | "recentBookings"
+    | "recentInvoices"
     | "recentTransactions"
     | "recentReviews"
     | "activities"
@@ -274,6 +275,7 @@ function enrich(
     version: "v1.0",
     journey: buildJourney(verified, hasBooking, hasReview),
     recentBookings: base.recentBookings ?? [],
+    recentInvoices: base.recentInvoices ?? [],
     recentTransactions: base.recentTransactions ?? [],
     recentReviews: hasReview ? sampleReviews : [],
     activities: sampleActivities,
@@ -686,6 +688,7 @@ export function blankCustomer(overrides: Partial<Customer> = {}): Customer {
     version: "—",
     journey: [],
     recentBookings: [],
+    recentInvoices: [],
     recentTransactions: [],
     recentReviews: [],
     activities: [],

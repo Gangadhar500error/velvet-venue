@@ -340,11 +340,35 @@ export async function fetchVenueOwners(params: VenueOwnerListParams = {}) {
   });
 }
 
+/** Fetch all pages matching filters (capped) for export. */
+export async function fetchAllVenueOwnersForExport(
+  filters: VenueOwnerFilters,
+  sortKey: string,
+  sortDir: "asc" | "desc",
+  maxRows = 5000
+) {
+  const pageSize = 100;
+  let page = 1;
+  let totalPages = 1;
+  const items: VenueOwner[] = [];
+  while (page <= totalPages && items.length < maxRows) {
+    const params = filtersToParams(filters, page, pageSize, sortKey, sortDir);
+    const data = await fetchVenueOwners(params);
+    items.push(...data.items.map(mapVenueOwnerListItem));
+    totalPages = Math.max(1, data.total_pages);
+    if (!data.items.length) break;
+    page += 1;
+  }
+  return items.slice(0, maxRows);
+}
+
 export async function fetchVenueOwner(id: string) {
   return apiRequest<ApiDetail>(`/venue-owners/${id}`);
 }
 
-export async function createVenueOwner(payload: ReturnType<typeof formToCreatePayload>) {
+export async function createVenueOwner(
+  payload: ReturnType<typeof formToCreatePayload> & { return_existing?: boolean }
+) {
   return apiRequest<MutationResponse>("/venue-owners", {
     method: "POST",
     body: JSON.stringify(payload),

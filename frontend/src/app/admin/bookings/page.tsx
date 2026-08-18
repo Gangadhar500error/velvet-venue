@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Columns3, Download, Filter, Plus, Search, Upload } from "lucide-react";
 import { PageHeader } from "../_components/ui/PageHeader";
 import { Button } from "../_components/ui/Button";
@@ -9,7 +9,12 @@ import { FilterPanel } from "./components/FilterPanel";
 import { BookingTable, columnLabels } from "./components/BookingTable";
 import { Booking, BookingColumnKey, BookingFilters, TableDensity } from "./types";
 import { confirmAction, notify } from "../_components/ui/Toast";
-import { useDemoStore } from "../store/demoStore";
+import {
+  cancelBooking,
+  fetchBookings,
+  filtersToBookingParams,
+  mapBookingListItem,
+} from "@/lib/bookings";
 
 const defaultFilters: BookingFilters = {
   search: "",
@@ -18,6 +23,8 @@ const defaultFilters: BookingFilters = {
   phone: "",
   venue: "",
   businessId: "",
+  businessProfileId: "",
+  vendorId: "",
   eventDate: "",
   bookingStatus: "",
   paymentStatus: "",
@@ -45,11 +52,27 @@ const defaultColumns: Record<BookingColumnKey, boolean> = {
 
 export default function BookingsPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [loading, setLoading] = useState(true);
-  const bookings = useDemoStore((s) => s.bookings);
-  const updateBooking = useDemoStore((s) => s.updateBooking);
-  const [filters, setFilters] = useState<BookingFilters>(defaultFilters);
-  const [appliedFilters, setAppliedFilters] = useState<BookingFilters>(defaultFilters);
+  const [bookings, setBookings] = useState<Booking[]>([]);
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+  const [filters, setFilters] = useState<BookingFilters>(() => {
+    const vendorId = searchParams.get("vendor") || searchParams.get("vendorId") || "";
+    const businessProfileId =
+      searchParams.get("business") || searchParams.get("businessProfileId") || "";
+    return vendorId || businessProfileId
+      ? { ...defaultFilters, vendorId, businessProfileId }
+      : defaultFilters;
+  });
+  const [appliedFilters, setAppliedFilters] = useState<BookingFilters>(() => {
+    const vendorId = searchParams.get("vendor") || searchParams.get("vendorId") || "";
+    const businessProfileId =
+      searchParams.get("business") || searchParams.get("businessProfileId") || "";
+    return vendorId || businessProfileId
+      ? { ...defaultFilters, vendorId, businessProfileId }
+      : defaultFilters;
+  });
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [page, setPage] = useState(1);
@@ -59,12 +82,32 @@ export default function BookingsPage() {
   const [visibleColumns, setVisibleColumns] = useState(defaultColumns);
   const [columnsOpen, setColumnsOpen] = useState(false);
   const [density] = useState<TableDensity>("compact");
+  const [error, setError] = useState<string | null>(null);
   const columnsRef = useRef<HTMLDivElement>(null);
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const loadBookings = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const params = filtersToBookingParams(appliedFilters, page, pageSize, sortKey, sortDir);
+      const data = await fetchBookings(params);
+      setBookings(data.items.map(mapBookingListItem));
+      setTotal(data.total);
+      setTotalPages(Math.max(1, data.total_pages));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load bookings");
+      setBookings([]);
+      setTotal(0);
+      setTotalPages(1);
+    } finally {
+      setLoading(false);
+    }
+  }, [appliedFilters, page, pageSize, sortKey, sortDir]);
 
   useEffect(() => {
-    const t = setTimeout(() => setLoading(false), 500);
-    return () => clearTimeout(t);
-  }, []);
+    loadBookings();
+  }, [loadBookings]);
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -72,6 +115,12 @@ export default function BookingsPage() {
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (searchTimer.current) clearTimeout(searchTimer.current);
+    };
   }, []);
 
   const activeFilterCount = useMemo(() => {
@@ -91,49 +140,7 @@ export default function BookingsPage() {
     ].filter(Boolean).length;
   }, [appliedFilters]);
 
-  const filtered = useMemo(() => {
-    let list = [...bookings];
-    const f = appliedFilters;
-
-    if (f.search) {
-      const q = f.search.toLowerCase();
-      list = list.filter(
-        (b) =>
-          b.bookingId.toLowerCase().includes(q) ||
-          b.customerName.toLowerCase().includes(q) ||
-          b.customerPhone.toLowerCase().includes(q) ||
-          b.venueName.toLowerCase().includes(q) ||
-          b.businessName.toLowerCase().includes(q) ||
-          b.eventType.toLowerCase().includes(q)
-      );
-    }
-    if (f.bookingId) list = list.filter((b) => b.bookingId.toLowerCase().includes(f.bookingId.toLowerCase()));
-    if (f.customer) list = list.filter((b) => b.customerName.toLowerCase().includes(f.customer.toLowerCase()));
-    if (f.phone) list = list.filter((b) => b.customerPhone.replace(/\s/g, "").includes(f.phone.replace(/\s/g, "")));
-    if (f.venue) list = list.filter((b) => b.venueName === f.venue);
-    if (f.businessId) list = list.filter((b) => b.businessId === f.businessId);
-    if (f.eventDate) list = list.filter((b) => b.eventDate === f.eventDate);
-    if (f.bookingStatus) list = list.filter((b) => b.bookingStatus === f.bookingStatus);
-    if (f.paymentStatus) list = list.filter((b) => b.paymentStatus === f.paymentStatus);
-    if (f.assignedExecutive) list = list.filter((b) => b.assignedExecutive === f.assignedExecutive);
-    if (f.dateFrom) list = list.filter((b) => b.bookingDate >= f.dateFrom);
-    if (f.dateTo) list = list.filter((b) => b.bookingDate <= f.dateTo);
-
-    list.sort((a, b) => {
-      const av = a[sortKey as keyof Booking];
-      const bv = b[sortKey as keyof Booking];
-      if (typeof av === "number" && typeof bv === "number") {
-        return sortDir === "asc" ? av - bv : bv - av;
-      }
-      return sortDir === "asc" ? String(av).localeCompare(String(bv)) : String(bv).localeCompare(String(av));
-    });
-
-    return list;
-  }, [bookings, appliedFilters, sortKey, sortDir]);
-
-  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
-  const startIndex = (page - 1) * pageSize;
-  const pageItems = filtered.slice(startIndex, startIndex + pageSize);
+  const startIndex = total === 0 ? 0 : (page - 1) * pageSize;
 
   useEffect(() => {
     setPage(1);
@@ -157,17 +164,21 @@ export default function BookingsPage() {
       confirmLabel: "Cancel Booking",
     });
     if (!ok) return;
-    updateBooking(booking.id, {
-      bookingStatus: "cancelled",
-      pendingAmount: 0,
-      updatedAt: new Date().toISOString(),
-    });
-    notify.statusUpdated("Booking cancelled successfully.");
+    try {
+      await cancelBooking(booking.id);
+      notify.statusUpdated("Booking cancelled successfully.");
+      await loadBookings();
+    } catch (err) {
+      notify.error(err instanceof Error ? err.message : "Failed to cancel booking");
+    }
   };
 
   const applySearch = (value: string) => {
     setFilters((prev) => ({ ...prev, search: value }));
-    setAppliedFilters((prev) => ({ ...prev, search: value }));
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+    searchTimer.current = setTimeout(() => {
+      setAppliedFilters((prev) => ({ ...prev, search: value }));
+    }, 350);
   };
 
   return (
@@ -289,6 +300,12 @@ export default function BookingsPage() {
         activeCount={activeFilterCount}
       />
 
+      {error ? (
+        <div className="rounded-[14px] border border-[#FECACA] bg-[#FEF2F2] px-4 py-3 text-sm text-[#DC2626]">
+          {error}
+        </div>
+      ) : null}
+
       {selectedIds.length > 0 && (
         <div className="flex flex-wrap items-center gap-2 rounded-[14px] border border-[#FFD4B0] bg-[#FFF8F3] px-4 py-2.5">
           <span className="text-sm font-medium text-[#9A3412]">{selectedIds.length} selected</span>
@@ -308,14 +325,14 @@ export default function BookingsPage() {
         </div>
       ) : (
         <BookingTable
-          bookings={pageItems}
+          bookings={bookings}
           selectedIds={selectedIds}
           onToggleSelect={(id) =>
             setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
           }
           onToggleSelectAll={() => {
-            if (selectedIds.length === pageItems.length) setSelectedIds([]);
-            else setSelectedIds(pageItems.map((b) => b.id));
+            if (selectedIds.length === bookings.length) setSelectedIds([]);
+            else setSelectedIds(bookings.map((b) => b.id));
           }}
           density={density}
           visibleColumns={visibleColumns}
@@ -328,31 +345,71 @@ export default function BookingsPage() {
         />
       )}
 
-      <div className="bg-white border border-[#E8EAF0] rounded-[14px] px-4 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <p className="text-sm text-[#6B7280]">
-          Showing <span className="font-semibold text-[#111827]">{filtered.length === 0 ? 0 : startIndex + 1}</span>
-          –<span className="font-semibold text-[#111827]">{Math.min(startIndex + pageSize, filtered.length)}</span> of{" "}
-          <span className="font-semibold text-[#111827]">{filtered.length}</span> bookings
-        </p>
-        <div className="flex items-center gap-2">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 bg-white border border-[#E8EAF0] rounded-[14px] px-4 py-3">
+        <div className="flex items-center gap-3 text-sm text-[#6B7280]">
+          <span>Rows</span>
           <select
             value={pageSize}
             onChange={(e) => setPageSize(Number(e.target.value))}
-            className="h-9 px-2.5 rounded-lg border border-[#E8EAF0] text-sm text-[#4B5563] bg-white"
+            className="h-9 px-2.5 rounded-[10px] border border-[#E8EAF0] bg-white text-sm text-[#111827] focus:outline-none focus:ring-2 focus:ring-[#C89B3C]/25"
           >
-            {[10, 25, 50].map((n) => (
+            {[10, 25, 50, 100].map((n) => (
               <option key={n} value={n}>
-                {n} / page
+                {n}
               </option>
             ))}
           </select>
-          <Button variant="secondary" size="sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
+          <span>
+            Showing{" "}
+            <span className="font-medium text-[#111827]">
+              {total === 0 ? 0 : startIndex + 1}-{Math.min(startIndex + pageSize, total)}
+            </span>{" "}
+            of <span className="font-medium text-[#111827]">{total.toLocaleString()}</span>{" "}
+            Bookings
+          </span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <Button
+            variant="secondary"
+            size="sm"
+            disabled={page <= 1}
+            onClick={() => setPage((p) => Math.max(1, p - 1))}
+          >
             Previous
           </Button>
-          <span className="text-sm text-[#6B7280] px-1">
-            {page} / {totalPages}
-          </span>
-          <Button variant="secondary" size="sm" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}>
+          {Array.from({ length: totalPages }, (_, i) => i + 1)
+            .filter((p) => p === 1 || p === totalPages || Math.abs(p - page) <= 1)
+            .reduce<(number | string)[]>((acc, p, idx, arr) => {
+              if (idx > 0 && p - (arr[idx - 1] as number) > 1) acc.push("...");
+              acc.push(p);
+              return acc;
+            }, [])
+            .map((p, idx) =>
+              typeof p === "string" ? (
+                <span key={`e-${idx}`} className="px-2 text-[#9CA3AF]">
+                  …
+                </span>
+              ) : (
+                <button
+                  key={p}
+                  type="button"
+                  onClick={() => setPage(p)}
+                  className={`min-w-9 h-9 rounded-[10px] text-sm font-medium transition-colors ${
+                    page === p
+                      ? "bg-[#C89B3C] text-white"
+                      : "bg-white border border-[#E8EAF0] text-[#4B5563] hover:bg-[#F8F9FB]"
+                  }`}
+                >
+                  {p}
+                </button>
+              )
+            )}
+          <Button
+            variant="secondary"
+            size="sm"
+            disabled={page >= totalPages}
+            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+          >
             Next
           </Button>
         </div>

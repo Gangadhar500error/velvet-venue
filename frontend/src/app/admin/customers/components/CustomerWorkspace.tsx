@@ -1,11 +1,12 @@
 "use client";
 
 import type { ComponentType, ReactNode } from "react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   CalendarDays,
   ChevronDown,
   Copy,
+  FileText,
   Mail,
   MapPin,
   Pencil,
@@ -29,17 +30,16 @@ import {
   VerificationStatus,
 } from "../types";
 import { cityOptions, formatCurrency, formatDate, formatDateTime } from "../data";
-import { useDemoStore } from "../../store/demoStore";
 import {
   RelationCard,
   RelatedBookingsTable,
   RelatedInvoicesTable,
   ViewAllButton,
-  bookingsForCustomer,
-  flattenInvoices,
+  type RelatedInvoiceRow,
 } from "../../_components/relations";
 import { EntityViewLayout } from "../../_components/layout/EntityViewLayout";
-import { FileText } from "lucide-react";
+import { fetchBookings, mapBookingListItem } from "@/lib/bookings";
+import type { Booking } from "../../bookings/types";
 
 type TabKey = "overview" | "reviews";
 
@@ -55,6 +55,38 @@ interface CustomerWorkspaceProps {
   saving?: boolean;
   /** Breadcrumb label override (e.g. Create / Clone) */
   pageLabel?: string;
+}
+
+function mapPaymentStatusForPill(status?: string | null): string {
+  if (status === "pending") return "unpaid";
+  return status || "unpaid";
+}
+
+function invoicesFromCustomer(customer: Customer): RelatedInvoiceRow[] {
+  return (customer.recentInvoices || []).map((inv) => ({
+    id: inv.id,
+    invoiceNo: inv.invoiceNo,
+    invoiceDate: inv.invoiceDate,
+    paymentType: inv.paymentType,
+    paymentMethod: inv.paymentMethod,
+    amountReceived: inv.amountReceived,
+    remainingBalance: inv.remainingBalance,
+    status: inv.status,
+    transactionId: inv.transactionId,
+    gstAmount: inv.gstAmount,
+    bookingId: inv.bookingId,
+    bookingRef: inv.bookingRef,
+    customerId: customer.id,
+    customerName: customer.name,
+    venueId: inv.venueId,
+    venueName: inv.venueName,
+    businessId: inv.businessId,
+    businessName: inv.businessName,
+    bookingAmount: inv.bookingAmount,
+    paymentStatus: mapPaymentStatusForPill(inv.paymentStatus),
+    invoiceAmount: inv.invoiceAmount,
+    amountPaid: inv.amountPaid,
+  }));
 }
 
 const labelCls =
@@ -81,6 +113,8 @@ export function CustomerWorkspace({
   const [tab, setTab] = useState<TabKey>("overview");
   const [reviewSearch, setReviewSearch] = useState("");
   const [ratingFilter, setRatingFilter] = useState("");
+  const [relatedBookings, setRelatedBookings] = useState<Booking[]>([]);
+  const [relationsLoading, setRelationsLoading] = useState(false);
 
   // Live display values (header stays read-only text; edits only in Customer Information)
   const name = editable ? form!.name : customer.name;
@@ -123,18 +157,45 @@ export function CustomerWorkspace({
     }));
   }, [customer.recentReviews]);
 
-  const allBookings = useDemoStore((s) => s.bookings);
-  const relatedBookings = useMemo(() => {
-    const byCode = bookingsForCustomer(allBookings, customer.customerId);
-    const byId = bookingsForCustomer(allBookings, customer.id);
-    const map = new Map<string, (typeof allBookings)[0]>();
-    [...byCode, ...byId].forEach((b) => map.set(b.id, b));
-    return Array.from(map.values());
-  }, [allBookings, customer.customerId, customer.id]);
-  const relatedInvoices = useMemo(
-    () => flattenInvoices(relatedBookings),
-    [relatedBookings]
-  );
+  useEffect(() => {
+    if (isCreate || !customer.id) {
+      setRelatedBookings([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      setRelationsLoading(true);
+      try {
+        const data = await fetchBookings({
+          customer_id: customer.id,
+          page: 1,
+          page_size: 50,
+          sort_by: "created_at",
+          sort_dir: "desc",
+        });
+        if (!cancelled) setRelatedBookings(data.items.map(mapBookingListItem));
+      } catch {
+        if (!cancelled) setRelatedBookings([]);
+      } finally {
+        if (!cancelled) setRelationsLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [customer.id, isCreate]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || isCreate) return;
+    const hash = window.location.hash.replace("#", "");
+    if (hash !== "customer-bookings" && hash !== "customer-invoices") return;
+    const timer = window.setTimeout(() => {
+      document.getElementById(hash)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [customer.id, isCreate, relationsLoading]);
+
+  const relatedInvoices = useMemo(() => invoicesFromCustomer(customer), [customer]);
 
   return (
     <div className="flex flex-col gap-3 animate-fadeIn pb-6">
@@ -456,6 +517,7 @@ export function CustomerWorkspace({
               !isCreate ? (
                 <>
                   <RelationCard
+                    id="customer-bookings"
                     icon={CalendarDays}
                     title="Bookings"
                     subtitle="Bookings belonging to this customer"
@@ -464,10 +526,15 @@ export function CustomerWorkspace({
                       <ViewAllButton href="/admin/bookings" label="View All Bookings" />
                     }
                   >
-                    <RelatedBookingsTable bookings={relatedBookings} />
+                    {relationsLoading ? (
+                      <div className="py-8 text-center text-sm text-[#9CA3AF]">Loading bookings…</div>
+                    ) : (
+                      <RelatedBookingsTable bookings={relatedBookings} />
+                    )}
                   </RelationCard>
 
                   <RelationCard
+                    id="customer-invoices"
                     icon={FileText}
                     title="Invoices"
                     subtitle="Invoices generated for this customer's bookings"

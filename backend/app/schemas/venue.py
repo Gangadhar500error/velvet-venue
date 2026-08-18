@@ -10,8 +10,19 @@ ApprovalLiteral = Literal["approved", "pending", "rejected"]
 AvailabilityLiteral = Literal["available", "busy", "blocked"]
 PricingModeLiteral = Literal["full_day", "slot_based"]
 PricingTypeLiteral = Literal["venue_only", "venue_food"]
+BookingTypeLiteral = Literal["venue_only", "venue_food"]
 SortByLiteral = Literal["venue_name", "created_at", "city", "capacity", "name"]
 SortDirLiteral = Literal["asc", "desc"]
+
+
+def normalize_booking_types(values: list[str] | None) -> list[BookingTypeLiteral]:
+    allowed = {"venue_only", "venue_food"}
+    cleaned: list[BookingTypeLiteral] = []
+    for value in values or []:
+        key = str(value or "").strip().lower()
+        if key in allowed and key not in cleaned:
+            cleaned.append(key)  # type: ignore[arg-type]
+    return cleaned or ["venue_only"]
 
 
 def _initials(name: str) -> str:
@@ -135,6 +146,7 @@ class VenueCreateRequest(BaseModel):
     refund_policy: str | None = None
     cover_image_url: str | None = None
     video_url: str | None = None
+    booking_type: list[BookingTypeLiteral] = Field(default_factory=lambda: ["venue_only"])
     amenities: list[str] = Field(default_factory=list)
     services: list[str] = Field(default_factory=list)
     event_categories: list[str] = Field(default_factory=list)
@@ -149,6 +161,11 @@ class VenueCreateRequest(BaseModel):
         if not cleaned:
             raise ValueError("Venue name is required.")
         return cleaned
+
+    @field_validator("booking_type")
+    @classmethod
+    def validate_booking_type(cls, value: list[str] | None) -> list[BookingTypeLiteral]:
+        return normalize_booking_types(value)
 
 
 class VenueUpdateRequest(BaseModel):
@@ -198,12 +215,22 @@ class VenueUpdateRequest(BaseModel):
     refund_policy: str | None = None
     cover_image_url: str | None = None
     video_url: str | None = None
+    booking_type: list[BookingTypeLiteral] | None = None
     amenities: list[str] | None = None
     services: list[str] | None = None
     event_categories: list[str] | None = None
     pricing: PricingInput | None = None
     gallery: list[GalleryItemInput] | None = None
     documents: list[DocumentInput] | None = None
+
+    @field_validator("booking_type")
+    @classmethod
+    def validate_booking_type(
+        cls, value: list[str] | None
+    ) -> list[BookingTypeLiteral] | None:
+        if value is None:
+            return None
+        return normalize_booking_types(value)
 
 
 class VenueListItem(BaseModel):
@@ -230,6 +257,10 @@ class VenueListItem(BaseModel):
     total_bookings: int = 0
     created_at: datetime
     initials: str = ""
+    booking_type: list[str] = Field(default_factory=lambda: ["venue_only"])
+    advance_percent: float = 25.0
+    gst_percent: float = 18.0
+    pricing_mode: str = "full_day"
 
 
 class VenueListResponse(BaseModel):
@@ -554,6 +585,7 @@ class VenueDetailResponse(BaseModel):
     refund_policy: str | None
     cover_image_url: str | None
     video_url: str | None
+    booking_type: list[str] = Field(default_factory=lambda: ["venue_only"])
     created_at: datetime
     updated_at: datetime
     created_by: uuid.UUID | None

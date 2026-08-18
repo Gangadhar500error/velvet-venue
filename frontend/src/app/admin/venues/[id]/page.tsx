@@ -12,6 +12,77 @@ import { PageHeader } from "../../_components/ui/PageHeader";
 import { confirmAction, notify, toast } from "../../_components/ui/Toast";
 import { deleteVenue, fetchVenue, mapVenueDetail } from "@/lib/venues";
 
+function VenueDetailSkeleton() {
+  return (
+    <div className="space-y-4 animate-pulse">
+      {/* Header Skeleton */}
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div className="space-y-1.5">
+          <div className="flex items-center gap-2">
+            <div className="w-16 h-3.5 bg-[#E5E7EB] rounded" />
+            <div className="w-2.5 h-2.5 bg-[#E5E7EB] rounded-full" />
+            <div className="w-28 h-3.5 bg-[#E5E7EB] rounded" />
+            <div className="w-2.5 h-2.5 bg-[#E5E7EB] rounded-full" />
+            <div className="w-16 h-3.5 bg-[#E5E7EB] rounded" />
+          </div>
+          <div className="w-48 h-7 bg-[#E5E7EB] rounded-lg mt-1" />
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="w-20 h-9 bg-[#E5E7EB] rounded-xl" />
+          <div className="w-20 h-9 bg-[#E5E7EB] rounded-xl" />
+          <div className="w-20 h-9 bg-[#E5E7EB] rounded-xl" />
+        </div>
+      </div>
+
+      {/* Tabs Bar Skeleton */}
+      <div className="flex items-center gap-2 border-b border-[#E8EAF0] pb-2">
+        {[100, 80, 85, 105, 110, 85].map((w, i) => (
+          <div
+            key={i}
+            className="h-8 bg-[#E5E7EB] rounded-lg"
+            style={{ width: `${w}px` }}
+          />
+        ))}
+      </div>
+
+      {/* KPI Cards Skeleton */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+        {Array.from({ length: 5 }).map((_, i) => (
+          <div
+            key={i}
+            className="h-[72px] rounded-[12px] border border-[#E8EAF0] bg-white px-3 py-2 flex flex-col justify-center space-y-2"
+          >
+            <div className="w-20 h-3 bg-[#F3F4F6] rounded" />
+            <div className="w-10 h-5 bg-[#F3F4F6] rounded" />
+          </div>
+        ))}
+      </div>
+
+      {/* Content Card Skeleton */}
+      <div className="rounded-[14px] border border-[#E8EAF0] bg-white overflow-hidden p-6 space-y-4">
+        <div className="flex items-center justify-between border-b border-[#E8EAF0] pb-4">
+          <div className="space-y-1.5">
+            <div className="w-36 h-4 bg-[#E5E7EB] rounded" />
+            <div className="w-56 h-3 bg-[#F3F4F6] rounded" />
+          </div>
+          <div className="w-28 h-8 bg-[#F3F4F6] rounded-lg" />
+        </div>
+        <div className="grid grid-cols-7 gap-2 pt-2">
+          {Array.from({ length: 35 }).map((_, i) => (
+            <div
+              key={i}
+              className="min-h-[72px] rounded-xl border border-[#F3F4F6] bg-[#FAFAFB] p-2 space-y-2"
+            >
+              <div className="w-4 h-3 bg-[#E5E7EB] rounded" />
+              <div className="w-14 h-3.5 bg-[#E5E7EB]/60 rounded" />
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ViewVenueContent() {
   const params = useParams();
   const id = params.id as string;
@@ -77,12 +148,7 @@ function ViewVenueContent() {
   }, [searchParams, id, router]);
 
   if (loading) {
-    return (
-      <div className="bg-white border border-[#E8EAF0] rounded-[14px] p-6 animate-pulse space-y-3">
-        <div className="h-10 bg-[#F3F4F6] rounded-lg" />
-        <div className="h-24 bg-[#F3F4F6] rounded-lg" />
-      </div>
-    );
+    return <VenueDetailSkeleton />;
   }
 
   if (notFound || !venue) {
@@ -165,14 +231,7 @@ function ViewVenueContent() {
 
 export default function ViewVenuePage() {
   return (
-    <Suspense
-      fallback={
-        <div className="bg-white border border-[#E8EAF0] rounded-[14px] p-6 animate-pulse space-y-3">
-          <div className="h-10 bg-[#F3F4F6] rounded-lg" />
-          <div className="h-24 bg-[#F3F4F6] rounded-lg" />
-        </div>
-      }
-    >
+    <Suspense fallback={<VenueDetailSkeleton />}>
       <ViewVenueContent />
     </Suspense>
   );

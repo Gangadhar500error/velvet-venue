@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
-import { venueToFormValues, defaultDocumentSlots } from "../../data";
+import { venueToFormValues, defaultDocumentSlots, validatePricingSlots } from "../../data";
 import { VenueWorkspace } from "../../components/VenueWorkspace";
 import { Venue, VenueDocument, VenueFormValues } from "../../types";
 import { Button } from "../../../_components/ui/Button";
@@ -27,7 +27,7 @@ function mapDocumentsForApi(documents: VenueDocument[]) {
       status: d.status || "pending",
       file_name: d.fileName || null,
       file_size: d.fileSize || null,
-      file_url: null,
+      file_url: d.fileUrl || null,
       verified_by: d.verifiedBy || null,
       uploaded_date: d.uploadedDate || null,
     }));
@@ -121,11 +121,21 @@ export default function EditVenuePage() {
 
   const handleCancel = () => router.push(`/admin/venues/${venue.id}`);
 
+  const validatePricing = () => {
+    const res = validatePricingSlots(form);
+    if (!res.valid) {
+      notify.validation(res.message || "Invalid slot configuration.");
+      return false;
+    }
+    return true;
+  };
+
   const handleSave = async () => {
     if (!form.name.trim() || !form.businessId.trim() || !form.category.trim() || !form.city.trim()) {
       notify.validation("Venue name, business profile, category and city are required.");
       return;
     }
+    if (!validatePricing()) return;
     setSaving(true);
     try {
       const payload = {
@@ -196,6 +206,7 @@ export default function EditVenuePage() {
     securityDeposit: Number(form.securityDeposit) || 0,
     cleaningCharges: Number(form.cleaningCharges) || 0,
     bookingModel: form.bookingModel,
+    bookingTypes: form.bookingTypes && form.bookingTypes.length > 0 ? form.bookingTypes : [form.bookingModel || "venue_only"],
     pricingMethod: form.pricingMethod,
     foodPricingMethod: "slot_based",
     pricingSlots: form.pricingSlots,
@@ -268,6 +279,14 @@ export default function EditVenuePage() {
       onGalleryImagesChange={setGalleryImages}
       onCancel={handleCancel}
       onSave={handleSave}
+      onSaveContinue={async (tab) => {
+        if (tab === "overview" && (!form.name.trim() || !form.businessId.trim() || !form.category.trim() || !form.city.trim())) {
+          notify.validation("Venue name, business profile, category and city are required.");
+          return false;
+        }
+        if (tab === "pricing" && !validatePricing()) return false;
+        return true;
+      }}
       saving={saving}
     />
   );

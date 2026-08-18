@@ -1,4 +1,4 @@
-import { apiRequest } from "@/lib/api";
+import { apiRequest, resolveMediaUrl } from "@/lib/api";
 import type {
   ApprovalStatus,
   BookingModel,
@@ -27,6 +27,7 @@ export interface VenueListParams {
   venue_type?: string;
   city?: string;
   business_profile_id?: string;
+  venue_owner_id?: string;
   sort_by?: string;
   sort_dir?: "asc" | "desc";
   page?: number;
@@ -127,6 +128,7 @@ interface ApiDetail {
   video_url?: string | null;
   created_at: string;
   updated_at: string;
+  booking_type?: string[] | null;
   created_by?: string | null;
   updated_by?: string | null;
   initials: string;
@@ -255,6 +257,10 @@ interface ApiListItem {
   total_bookings: number;
   created_at: string;
   initials: string;
+  booking_type?: string[] | null;
+  advance_percent?: number | null;
+  gst_percent?: number | null;
+  pricing_mode?: string | null;
 }
 
 interface ListResponse {
@@ -328,6 +334,7 @@ function mapDocuments(docs: ApiDetail["documents"]): VenueDocument[] {
     verifiedBy: d.verified_by || "",
     fileName: d.file_name || undefined,
     fileSize: d.file_size || undefined,
+    fileUrl: d.file_url ? resolveMediaUrl(d.file_url) : undefined,
   }));
 }
 
@@ -345,13 +352,34 @@ export function mapVenueDetail(api: ApiDetail): Venue {
     food_slots: [],
   };
   const gallery = api.gallery || [];
-  const cover =
+  const rawCover =
     api.cover_image_url ||
     gallery.find((g) => g.is_cover || g.image_type === "cover")?.image_url ||
-    "";
-  const bookingModel = (pricing.pricing_type === "venue_food"
+    (gallery.length > 0 ? gallery[0].image_url : "");
+  const cover = resolveMediaUrl(rawCover);
+
+  const galleryImagesList = gallery
+    .filter((g) => g.image_type === "gallery" || g.image_type === "image")
+    .map((g) => resolveMediaUrl(g.image_url));
+  const fallbackGallery = gallery
+    .filter((g) => !g.is_cover && g.image_type !== "cover")
+    .map((g) => resolveMediaUrl(g.image_url));
+  const allGallery = gallery.map((g) => resolveMediaUrl(g.image_url));
+  const galleryImages =
+    galleryImagesList.length > 0
+      ? galleryImagesList
+      : fallbackGallery.length > 0
+      ? fallbackGallery
+      : allGallery;
+
+  const rawBookingTypes = Array.isArray(api.booking_type) ? api.booking_type : [];
+  const bookingTypes: BookingModel[] =
+    rawBookingTypes.length > 0
+      ? (rawBookingTypes.map((t) => (t === "venue_food" ? "venue_food" : "venue_only")) as BookingModel[])
+      : [pricing.pricing_type === "venue_food" ? "venue_food" : "venue_only"];
+  const bookingModel = (bookingTypes[0] || (pricing.pricing_type === "venue_food"
     ? "venue_food"
-    : "venue_only") as BookingModel;
+    : "venue_only")) as BookingModel;
   const pricingMethod = (pricing.pricing_mode === "slot_based"
     ? "slot_based"
     : "full_day") as PricingMethod;
@@ -395,8 +423,8 @@ export function mapVenueDetail(api: ApiDetail): Venue {
       .filter(Boolean),
     houseRules: api.house_rules || "",
     coverImage: cover,
-    galleryImages: gallery.filter((g) => g.image_type === "gallery").map((g) => g.image_url),
-    images360: gallery.filter((g) => g.image_type === "360").map((g) => g.image_url),
+    galleryImages,
+    images360: gallery.filter((g) => g.image_type === "360").map((g) => resolveMediaUrl(g.image_url)),
     videoUrl: api.video_url || "",
     addressLine1: api.address_line1 || api.location?.address_line1 || "",
     addressLine2: api.address_line2 || api.location?.address_line2 || "",
@@ -419,6 +447,7 @@ export function mapVenueDetail(api: ApiDetail): Venue {
     securityDeposit: 0,
     cleaningCharges: 0,
     bookingModel,
+    bookingTypes,
     pricingMethod,
     foodPricingMethod: "slot_based",
     pricingSlots: mapSlots(pricing),
@@ -522,6 +551,7 @@ export function mapVenueListItem(api: ApiListItem): Venue {
       venue_name: api.venue_name,
       category: api.category,
       venue_type: api.venue_type,
+      booking_type: api.booking_type,
       featured: api.featured,
       city: api.city,
       seating_capacity: api.seating_capacity,
@@ -549,11 +579,11 @@ export function mapVenueListItem(api: ApiListItem): Venue {
       services: [],
       event_categories: [],
       pricing: {
-        pricing_mode: "full_day",
+        pricing_mode: api.pricing_mode || "full_day",
         pricing_type: "venue_only",
-        gst_percent: 18,
+        gst_percent: api.gst_percent ?? 18,
         gst_mode: "excluded",
-        advance_percent: 25,
+        advance_percent: api.advance_percent ?? 25,
         booking_window_days: 180,
         minimum_notice_hours: 24,
         booking_confirmation: "manual",
@@ -580,9 +610,14 @@ export function mapVenueListItem(api: ApiListItem): Venue {
 }
 
 export function formToCreatePayload(form: VenueFormValues) {
+  const bookingTypes =
+    form.bookingTypes && form.bookingTypes.length > 0
+      ? form.bookingTypes
+      : [form.bookingModel === "venue_food" ? "venue_food" : "venue_only"];
   const pricingType = form.bookingModel === "venue_food" ? "venue_food" : "venue_only";
   const pricingMode = form.pricingMethod === "slot_based" ? "slot_based" : "full_day";
   return {
+    booking_type: bookingTypes,
     business_profile_id: form.businessId,
     venue_name: form.name.trim(),
     category: form.category || null,
@@ -641,39 +676,29 @@ export function formToCreatePayload(form: VenueFormValues) {
       operating_hours: form.operatingHours || null,
       booking_confirmation: form.bookingConfirmation || "manual",
       cancellation_preset: form.cancellationPreset || null,
-      slots: (() => {
-        const all = form.pricingSlots || [];
-        const filtered =
-          pricingMode === "full_day"
-            ? all.filter((s) => s.key === "full_day")
-            : all.filter((s) => s.key !== "full_day");
-        return (filtered.length ? filtered : all).map((s, i) => ({
-          id: /^[0-9a-f-]{36}$/i.test(s.id) ? s.id : undefined,
-          key: s.key,
-          name: s.name,
-          enabled: s.enabled,
-          time_label: s.timeLabel || null,
-          price: Number(s.price) || 0,
-          min_booking_amount: Number(s.minBookingAmount) || 0,
-          max_guests: Number(s.maxGuests) || null,
-          display_order: i,
-        }));
-      })(),
-      food_slots:
-        pricingType === "venue_food"
-          ? (form.foodSlots || []).map((s, i) => ({
-              id: /^[0-9a-f-]{36}$/i.test(s.id) ? s.id : undefined,
-              key: s.key,
-              name: s.name,
-              enabled: s.enabled,
-              time_label: s.timeLabel || null,
-              veg_plate_cost: Number(s.vegPlateCost) || 0,
-              non_veg_plate_cost: Number(s.nonVegPlateCost) || 0,
-              min_guests: Number(s.minGuests) || null,
-              max_guests: Number(s.maxGuests) || null,
-              display_order: i,
-            }))
-          : [],
+      slots: (form.pricingSlots || []).map((s, i) => ({
+        id: /^[0-9a-f-]{36}$/i.test(s.id) ? s.id : undefined,
+        key: s.key,
+        name: s.name,
+        enabled: s.enabled,
+        time_label: s.timeLabel || null,
+        price: Number(s.price) || 0,
+        min_booking_amount: Number(s.minBookingAmount) || 0,
+        max_guests: Number(s.maxGuests) || null,
+        display_order: i,
+      })),
+      food_slots: (form.foodSlots || []).map((s, i) => ({
+        id: /^[0-9a-f-]{36}$/i.test(s.id) ? s.id : undefined,
+        key: s.key,
+        name: s.name,
+        enabled: s.enabled,
+        time_label: s.timeLabel || null,
+        veg_plate_cost: Number(s.vegPlateCost) || 0,
+        non_veg_plate_cost: Number(s.nonVegPlateCost) || 0,
+        min_guests: Number(s.minGuests) || null,
+        max_guests: Number(s.maxGuests) || null,
+        display_order: i,
+      })),
     },
   };
 }
@@ -705,6 +730,7 @@ export function filtersToParams(
     category: filters.category || undefined,
     city: filters.city || undefined,
     business_profile_id: filters.businessId || undefined,
+    venue_owner_id: filters.ownerId || undefined,
     sort_by: sortMap[sortKey] || "venue_name",
     sort_dir: sortDir,
     page,
@@ -798,4 +824,26 @@ export async function fetchVenueMeta() {
     event_types: string[];
     cities: string[];
   }>("/venues/meta");
+}
+
+/** Fetch all pages matching filters (capped) for export. */
+export async function fetchAllVenuesForExport(
+  filters: VenueFilters,
+  sortKey: string,
+  sortDir: "asc" | "desc",
+  maxRows = 5000
+) {
+  const pageSize = 100;
+  let page = 1;
+  let totalPages = 1;
+  const items: Venue[] = [];
+  while (page <= totalPages && items.length < maxRows) {
+    const params = filtersToParams(filters, page, pageSize, sortKey, sortDir);
+    const data = await fetchVenues(params);
+    items.push(...data.items.map(mapVenueListItem));
+    totalPages = Math.max(1, data.total_pages);
+    if (!data.items.length) break;
+    page += 1;
+  }
+  return items.slice(0, maxRows);
 }

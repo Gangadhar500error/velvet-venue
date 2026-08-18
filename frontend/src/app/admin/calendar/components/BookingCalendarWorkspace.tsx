@@ -75,15 +75,19 @@ export function BookingCalendarWorkspace() {
     };
   }, []);
 
+  const [loadingVenue, setLoadingVenue] = useState(false);
+
   useEffect(() => {
     if (!venueId || isPickingVenue) {
       setSelectedVenue(null);
       setAvailability([]);
       setDashboard(null);
+      setLoadingVenue(false);
       return;
     }
     let cancelled = false;
     (async () => {
+      setLoadingVenue(true);
       try {
         const detail = await fetchVenue(venueId);
         const mapped = mapVenueDetail(detail);
@@ -101,6 +105,8 @@ export function BookingCalendarWorkspace() {
           setAvailability([]);
           setDashboard(null);
         }
+      } finally {
+        if (!cancelled) setLoadingVenue(false);
       }
     })();
     return () => {
@@ -425,6 +431,7 @@ export function BookingCalendarWorkspace() {
             key={venue.id}
             venue={venue}
             availability={availability}
+            loading={loadingVenue}
             onBook={handleBookSlot}
             onViewBooking={openBooking}
             hideSummaryStats

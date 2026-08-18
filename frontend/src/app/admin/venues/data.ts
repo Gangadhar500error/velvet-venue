@@ -529,6 +529,7 @@ function enrichVenue(base: VenueBase, seed: number): Venue {
     securityDeposit: 25000,
     cleaningCharges: 3000,
     bookingModel: "venue_only" as const,
+    bookingTypes: ["venue_only" as const],
     pricingMethod: "full_day" as const,
     foodPricingMethod: "slot_based" as const,
     pricingSlots: defaultPricingSlots(),
@@ -1483,6 +1484,9 @@ export function venueToFormValues(venue: Venue): VenueFormValues {
     securityDeposit: String(venue.securityDeposit ?? ""),
     cleaningCharges: String(venue.cleaningCharges ?? ""),
     bookingModel: venue.bookingModel || "venue_only",
+    bookingTypes: Array.isArray(venue.bookingTypes) && venue.bookingTypes.length > 0
+      ? [...venue.bookingTypes]
+      : [venue.bookingModel || "venue_only"],
     pricingMethod: normalizeStoredMethod(venue.pricingMethod),
     foodPricingMethod: "slot_based",
     pricingSlots: (venue.pricingSlots?.length ? venue.pricingSlots : defaultPricingSlots()).map((s) => ({
@@ -1580,6 +1584,7 @@ export const emptyVenueForm: VenueFormValues = {
   securityDeposit: "",
   cleaningCharges: "",
   bookingModel: "venue_only",
+  bookingTypes: ["venue_only"],
   pricingMethod: "full_day",
   foodPricingMethod: "slot_based",
   pricingSlots: defaultPricingSlots(),
@@ -1679,7 +1684,8 @@ export function blankVenue(overrides: Partial<Venue> = {}): Venue {
     peakPrice: 0,
     securityDeposit: 0,
     cleaningCharges: 0,
-    bookingModel: "venue_only",
+    bookingModel: overrides.bookingModel || "venue_only",
+    bookingTypes: overrides.bookingTypes || (overrides.bookingModel ? [overrides.bookingModel] : ["venue_only"]),
     pricingMethod: "full_day",
     foodPricingMethod: "slot_based",
     pricingSlots: defaultPricingSlots(),
@@ -1751,4 +1757,84 @@ export function blankVenue(overrides: Partial<Venue> = {}): Venue {
     ratingDistribution: [5, 4, 3, 2, 1].map((stars) => ({ stars: stars as 1 | 2 | 3 | 4 | 5, count: 0 })),
     ...overrides,
   };
+}
+
+export function toInputTime(raw: string): string {
+  if (!raw) return "";
+  if (/^\d{1,2}:\d{2}$/.test(raw.trim())) {
+    const [h, m] = raw.trim().split(":").map(Number);
+    return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+  }
+  const match = raw.trim().match(/^(\d{1,2})(?::(\d{2}))?\s*(AM|PM)?$/i);
+  if (!match) return "09:00";
+  let hour = Number(match[1]);
+  const minute = Number(match[2] || 0);
+  const meridiem = (match[3] || "").toUpperCase();
+  if (meridiem === "PM" && hour < 12) hour += 12;
+  if (meridiem === "AM" && hour === 12) hour = 0;
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
+
+export function parseTimeLabel(label: string): { start: string; end: string } {
+  const parts = (label || "").split(/\s*[–—-]\s*/);
+  return {
+    start: toInputTime(parts[0]?.trim() || "09:00"),
+    end: toInputTime(parts[1]?.trim() || "17:00"),
+  };
+}
+
+export function isEndAfterStart(start: string, end: string): boolean {
+  if (!start || !end) return true;
+  const [sh, sm] = start.split(":").map(Number);
+  const [eh, em] = end.split(":").map(Number);
+  return eh * 60 + em > sh * 60 + sm;
+}
+
+export function formatDisplayTime(hhmm: string): string {
+  if (!hhmm) return "—";
+  const [hStr, mStr] = hhmm.split(":");
+  let h = Number(hStr);
+  const m = Number(mStr || 0);
+  const meridiem = h >= 12 ? "PM" : "AM";
+  h = h % 12;
+  if (h === 0) h = 12;
+  return m === 0 ? `${h} ${meridiem}` : `${h}:${String(m).padStart(2, "0")} ${meridiem}`;
+}
+
+export function validatePricingSlots(form: VenueFormValues): { valid: boolean; message?: string } {
+  const operatingHours = String(form.operatingHours || "09:00 - 23:00");
+  const { start: opStart, end: opEnd } = parseTimeLabel(operatingHours);
+
+  const isVenueFood = form.bookingModel === "venue_food";
+  const slotsToCheck = isVenueFood
+    ? form.foodSlots || []
+    : form.pricingMethod === "slot_based"
+    ? (form.pricingSlots || []).filter((s) => s.key !== "full_day" && s.enabled)
+    : [];
+
+  for (const slot of slotsToCheck) {
+    const { start, end } = parseTimeLabel(slot.timeLabel || "");
+    if (!start || !end) continue;
+
+    if (!isEndAfterStart(start, end)) {
+      return {
+        valid: false,
+        message: `Slot "${slot.name}": End time (${formatDisplayTime(end)}) must be after start time (${formatDisplayTime(start)}).`,
+      };
+    }
+    if (opStart && start < opStart) {
+      return {
+        valid: false,
+        message: `Slot "${slot.name}": Start time (${formatDisplayTime(start)}) cannot be earlier than venue opening time (${formatDisplayTime(opStart)}).`,
+      };
+    }
+    if (opEnd && end > opEnd) {
+      return {
+        valid: false,
+        message: `Slot "${slot.name}": End time (${formatDisplayTime(end)}) cannot exceed venue closing time (${formatDisplayTime(opEnd)}).`,
+      };
+    }
+  }
+
+  return { valid: true };
 }

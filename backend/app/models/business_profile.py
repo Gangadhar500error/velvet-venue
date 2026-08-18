@@ -3,6 +3,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import (
+    Boolean,
     DateTime,
     ForeignKey,
     Index,
@@ -148,6 +149,58 @@ class BusinessProfile(Base):
         back_populates="business_profile",
         lazy="selectin",
         cascade="all, delete-orphan",
+    )
+    bank_accounts: Mapped[list["BusinessProfileBankAccount"]] = relationship(
+        "BusinessProfileBankAccount",
+        back_populates="business_profile",
+        lazy="selectin",
+        cascade="all, delete-orphan",
+        order_by="BusinessProfileBankAccount.sort_order",
+    )
+
+
+class BusinessProfileBankAccount(Base):
+    __tablename__ = "business_profile_bank_accounts"
+    __table_args__ = (
+        Index("ix_bp_bank_accounts_profile", "business_profile_id", "sort_order"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    business_profile_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("business_profiles.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    account_holder_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    bank_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    account_number: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    ifsc_code: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    cancelled_cheque_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    bank_proof_file_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    bank_proof_file_size: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    bank_proof_uploaded_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    is_primary: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    business_profile: Mapped["BusinessProfile"] = relationship(
+        "BusinessProfile", back_populates="bank_accounts"
     )
 
 

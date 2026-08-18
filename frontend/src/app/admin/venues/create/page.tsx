@@ -7,6 +7,7 @@ import {
   blankVenue,
   defaultDocumentSlots,
   emptyVenueForm,
+  validatePricingSlots,
   venueToFormValues,
 } from "../data";
 import { VenueDocument, VenueFormValues } from "../types";
@@ -27,7 +28,7 @@ function mapDocumentsForApi(documents: VenueDocument[]) {
       status: d.status || "pending",
       file_name: d.fileName || null,
       file_size: d.fileSize || null,
-      file_url: null,
+      file_url: d.fileUrl || null,
       verified_by: d.verifiedBy || null,
       uploaded_date: d.uploadedDate || null,
     }));
@@ -114,6 +115,7 @@ function CreateVenueContent() {
     diningCapacity: Number(form.diningCapacity) || 0,
     floatingCapacity: Number(form.floatingCapacity) || 0,
     bookingModel: form.bookingModel,
+    bookingTypes: form.bookingTypes && form.bookingTypes.length > 0 ? form.bookingTypes : [form.bookingModel || "venue_only"],
     pricingMethod: form.pricingMethod,
     pricingSlots: form.pricingSlots,
     foodSlots: form.foodSlots,
@@ -143,6 +145,15 @@ function CreateVenueContent() {
     return true;
   };
 
+  const validatePricing = () => {
+    const res = validatePricingSlots(form);
+    if (!res.valid) {
+      notify.validation(res.message || "Invalid slot configuration.");
+      return false;
+    }
+    return true;
+  };
+
   const handleCancel = () => {
     if (sourceId) router.push(`/admin/venues/${sourceId}`);
     else router.push("/admin/venues");
@@ -150,6 +161,7 @@ function CreateVenueContent() {
 
   const handleCreate = async () => {
     if (!validateOverview()) return;
+    if (!validatePricing()) return;
     setSaving(true);
     try {
       const base = formToCreatePayload(form);
@@ -201,6 +213,7 @@ function CreateVenueContent() {
       onSave={handleCreate}
       onSaveContinue={async (tab) => {
         if (tab === "overview" && !validateOverview()) return false;
+        if (tab === "pricing" && !validatePricing()) return false;
         return true;
       }}
       saving={saving}

@@ -138,6 +138,11 @@ class Venue(Base):
     cancellation_policy: Mapped[str | None] = mapped_column(Text, nullable=True)
     refund_policy: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    # Supported booking offerings: ["venue_only"], ["venue_food"], or both.
+    booking_type: Mapped[list] = mapped_column(
+        JSONB, nullable=False, default=lambda: ["venue_only"]
+    )
+
     cover_image_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     video_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     seo_title: Mapped[str | None] = mapped_column(String(255), nullable=True)

@@ -1,4 +1,5 @@
 import {
+  BusinessBankAccount,
   BusinessDocument,
   BusinessProfile,
   BusinessProfileFormValues,
@@ -307,6 +308,19 @@ function enrich(
     bankProofFileName: "cancelled-cheque.pdf",
     bankProofFileSize: "640 KB",
     bankProofUploadedDate: base.createdAt?.slice(0, 10) || "2024-01-15",
+    bankAccounts: [
+      {
+        id: `seed-bank-${base.id}`,
+        accountHolderName: base.ownerName,
+        bankName: "HDFC Bank",
+        accountNumber: "50100" + String(1000000 + Number(base.id) * 1111).slice(0, 7),
+        ifscCode: "HDFC0001234",
+        bankProofFileName: "cancelled-cheque.pdf",
+        bankProofFileSize: "640 KB",
+        bankProofUploadedDate: base.createdAt?.slice(0, 10) || "2024-01-15",
+        isPrimary: true,
+      },
+    ],
     notes: `${base.businessName} onboarded successfully. No pending compliance issues at this time.`,
     createdBy: "System",
     updatedBy: "Admin User",
@@ -841,6 +855,23 @@ export function getBusinessProfileById(id: string) {
 }
 
 export function businessToFormValues(business: BusinessProfile): BusinessProfileFormValues {
+  const bankAccounts =
+    business.bankAccounts && business.bankAccounts.length > 0
+      ? business.bankAccounts
+      : [
+          {
+            id: `legacy-${business.id}`,
+            accountHolderName: business.accountHolderName || "",
+            bankName: business.bankName || "",
+            accountNumber: business.accountNumber || "",
+            ifscCode: business.ifscCode || "",
+            bankProofFileName: business.bankProofFileName || "",
+            bankProofFileSize: business.bankProofFileSize || "",
+            bankProofUploadedDate: business.bankProofUploadedDate || "",
+            isPrimary: true,
+          },
+        ];
+  const primary = bankAccounts.find((b) => b.isPrimary) || bankAccounts[0];
   return {
     businessName: business.businessName,
     legalBusinessName: business.legalBusinessName || "",
@@ -864,16 +895,31 @@ export function businessToFormValues(business: BusinessProfile): BusinessProfile
     gstNumber: business.gstNumber || "",
     businessRegistrationNumber: business.businessRegistrationNumber || "",
     panNumber: business.panNumber || "",
-    accountHolderName: business.accountHolderName || "",
-    bankName: business.bankName || "",
-    accountNumber: business.accountNumber || "",
-    ifscCode: business.ifscCode || "",
-    bankProofFileName: business.bankProofFileName || "",
-    bankProofFileSize: business.bankProofFileSize || "",
-    bankProofUploadedDate: business.bankProofUploadedDate || "",
+    accountHolderName: primary?.accountHolderName || "",
+    bankName: primary?.bankName || "",
+    accountNumber: primary?.accountNumber || "",
+    ifscCode: primary?.ifscCode || "",
+    bankProofFileName: primary?.bankProofFileName || "",
+    bankProofFileSize: primary?.bankProofFileSize || "",
+    bankProofUploadedDate: primary?.bankProofUploadedDate || "",
+    bankAccounts,
     notes: business.notes || "",
     status: business.status,
     verification: business.verification,
+  };
+}
+
+export function emptyBankAccount(isPrimary = false): BusinessBankAccount {
+  return {
+    id: `tmp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    accountHolderName: "",
+    bankName: "",
+    accountNumber: "",
+    ifscCode: "",
+    bankProofFileName: "",
+    bankProofFileSize: "",
+    bankProofUploadedDate: "",
+    isPrimary,
   };
 }
 
@@ -907,6 +953,7 @@ export const emptyBusinessForm: BusinessProfileFormValues = {
   bankProofFileName: "",
   bankProofFileSize: "",
   bankProofUploadedDate: "",
+  bankAccounts: [emptyBankAccount(true)],
   notes: "",
   status: "pending",
   verification: "pending",
@@ -947,6 +994,7 @@ export function blankBusinessProfile(overrides: Partial<BusinessProfile> = {}): 
     bankProofFileName: "",
     bankProofFileSize: "",
     bankProofUploadedDate: "",
+    bankAccounts: [],
     notes: "",
     initials: initialsOf(businessName || "New Business"),
     status: "pending",

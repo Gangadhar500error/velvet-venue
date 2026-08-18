@@ -29,6 +29,7 @@ class BusinessProfileRepository:
             .options(
                 selectinload(BusinessProfile.venue_owner),
                 selectinload(BusinessProfile.documents),
+                selectinload(BusinessProfile.bank_accounts),
             )
             .where(BusinessProfile.id == profile_id, *self._not_deleted())
         )

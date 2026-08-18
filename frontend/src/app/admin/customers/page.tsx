@@ -19,14 +19,29 @@ import {
   Customer,
   CustomerColumnKey,
   CustomerFilters,
+  CustomerFormValues,
+  CustomerStatus,
+  RegistrationSource,
+  VerificationStatus,
 } from "./types";
 import {
+  createCustomer,
   deleteCustomer,
+  fetchAllCustomersForExport,
   fetchCustomers,
   filtersToParams,
+  formToCreatePayload,
   mapCustomerListItem,
+  updateCustomerStatus,
 } from "@/lib/customers";
 import { PermissionGate } from "@/components/PermissionGate";
+import {
+  downloadCustomerImportTemplate,
+  exportCustomersCsv,
+  exportCustomersExcel,
+  exportCustomersPdf,
+  parseCustomerImportFile,
+} from "./io";
 
 const defaultFilters: CustomerFilters = {
   search: "",
@@ -51,9 +66,30 @@ const defaultColumns: Record<CustomerColumnKey, boolean> = {
   registrationDate: true,
   verification: true,
   status: true,
-  lastLogin: true,
+  // lastLogin: false,
   actions: true,
 };
+
+type ExportFormat = "csv" | "excel" | "pdf";
+
+function normalizeStatus(value?: string): CustomerStatus {
+  const v = (value || "").toLowerCase();
+  if (v === "inactive" || v === "blocked" || v === "pending") return v;
+  return "active";
+}
+
+function normalizeVerification(value?: string): VerificationStatus {
+  const v = (value || "").toLowerCase();
+  if (v === "verified" || v === "rejected") return v;
+  return "pending";
+}
+
+function normalizeSource(value?: string): RegistrationSource {
+  const v = (value || "").toLowerCase().replace(/\s+/g, "_");
+  if (v === "mobile_app" || v === "referral" || v === "admin" || v === "partner") return v;
+  if (v === "vendor") return "partner";
+  return "website";
+}
 
 export default function CustomersPage() {
   const router = useRouter();
@@ -71,8 +107,15 @@ export default function CustomersPage() {
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [visibleColumns, setVisibleColumns] = useState(defaultColumns);
   const [columnsOpen, setColumnsOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [importing, setImporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const columnsRef = useRef<HTMLDivElement>(null);
+  const exportRef = useRef<HTMLDivElement>(null);
+  const importRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const loadCustomers = useCallback(async () => {
@@ -102,6 +145,12 @@ export default function CustomersPage() {
     const handler = (e: MouseEvent) => {
       if (columnsRef.current && !columnsRef.current.contains(e.target as Node)) {
         setColumnsOpen(false);
+      }
+      if (exportRef.current && !exportRef.current.contains(e.target as Node)) {
+        setExportOpen(false);
+      }
+      if (importRef.current && !importRef.current.contains(e.target as Node)) {
+        setImportOpen(false);
       }
     };
     document.addEventListener("mousedown", handler);
@@ -166,12 +215,135 @@ export default function CustomersPage() {
     }
   };
 
+  const handleBlock = async (customer: Customer) => {
+    const isBlocked = customer.status === "blocked";
+    const nextStatus = isBlocked ? "active" : "blocked";
+    const ok = await confirmAction({
+      title: isBlocked ? "Unblock Customer?" : "Block Customer?",
+      message: isBlocked
+        ? `Unblock ${customer.name}? Their status will be set to Active.`
+        : `Block ${customer.name}? Their status will be set to Blocked.`,
+      confirmLabel: isBlocked ? "Unblock" : "Block",
+    });
+    if (!ok) return;
+    try {
+      await updateCustomerStatus(customer.id, nextStatus);
+      notify.statusUpdated(
+        isBlocked
+          ? `${customer.name} has been unblocked.`
+          : `${customer.name} has been blocked.`
+      );
+      await loadCustomers();
+    } catch (err) {
+      notify.error(err instanceof Error ? err.message : "Status update failed");
+    }
+  };
+
   const applySearch = (value: string) => {
     setFilters((prev) => ({ ...prev, search: value }));
     if (searchTimer.current) clearTimeout(searchTimer.current);
     searchTimer.current = setTimeout(() => {
       setAppliedFilters((prev) => ({ ...prev, search: value }));
     }, 350);
+  };
+
+  const resolveExportRows = useCallback(async () => {
+    if (selectedIds.length > 0) {
+      return customers.filter((c) => selectedIds.includes(c.id));
+    }
+    return fetchAllCustomersForExport(appliedFilters, sortKey, sortDir);
+  }, [selectedIds, customers, appliedFilters, sortKey, sortDir]);
+
+  const runExport = async (format: ExportFormat) => {
+    setExportOpen(false);
+    setExporting(true);
+    try {
+      const rows = await resolveExportRows();
+      if (!rows.length) {
+        notify.error("No customers to export.");
+        return;
+      }
+      const stamp = new Date().toISOString().slice(0, 10);
+      if (format === "csv") {
+        exportCustomersCsv(rows, `customers-${stamp}.csv`);
+        notify.exported();
+        return;
+      }
+      if (format === "excel") {
+        exportCustomersExcel(rows, `customers-${stamp}.xls`);
+        notify.exported();
+        return;
+      }
+      exportCustomersPdf(rows, stamp);
+      notify.exported();
+    } catch (err) {
+      notify.error(err instanceof Error ? err.message : "Export failed");
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const handleImportFile = async (file: File | null) => {
+    if (!file) return;
+    setImportOpen(false);
+    setImporting(true);
+    try {
+      const rows = await parseCustomerImportFile(file);
+      if (!rows.length) {
+        notify.error("No valid customer rows found in the file.");
+        return;
+      }
+
+      let created = 0;
+      let existed = 0;
+      let failed = 0;
+
+      for (const row of rows) {
+        const form: CustomerFormValues = {
+          name: row.name,
+          email: row.email,
+          phone: row.mobile,
+          gender: "",
+          city: row.city || "",
+          country: row.country || "India",
+          addressLine1: row.addressLine1 || "",
+          addressLine2: "",
+          state: row.state || "",
+          zipCode: "",
+          dob: "",
+          source: normalizeSource(row.source),
+          status: normalizeStatus(row.status),
+          emailVerified: false,
+          mobileVerified: false,
+          communicationPreference: "email",
+          verification: normalizeVerification(row.verification),
+          notes: row.notes || "",
+        };
+        try {
+          const result = await createCustomer({
+            ...formToCreatePayload(form),
+            return_existing: true,
+          });
+          if (result.existed) existed += 1;
+          else created += 1;
+        } catch {
+          failed += 1;
+        }
+      }
+
+      notify.imported();
+      if (failed > 0 || existed > 0) {
+        notify.statusUpdated(
+          `Import finished: ${created} created, ${existed} already existed, ${failed} failed.`
+        );
+      }
+      await loadCustomers();
+    } catch (err) {
+      notify.error(err instanceof Error ? err.message : "Import failed");
+    } finally {
+      setImporting(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
   };
 
   return (
@@ -267,13 +439,91 @@ export default function CustomersPage() {
 
             <div className="hidden sm:block w-px h-7 bg-[#E8EAF0] mx-0.5" aria-hidden />
 
-            <Button variant="secondary" size="sm" icon={Upload}>
-              Import
-            </Button>
+            <div className="relative" ref={importRef}>
+              <PermissionGate permission="Customer.Create">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  icon={Upload}
+                  disabled={importing}
+                  onClick={() => {
+                    setExportOpen(false);
+                    setImportOpen((v) => !v);
+                  }}
+                >
+                  {importing ? "Importing…" : "Import"}
+                </Button>
+              </PermissionGate>
+              {importOpen && (
+                <div className="absolute right-0 top-full mt-2 w-52 bg-white border border-[#E8EAF0] rounded-xl shadow-[0_8px_24px_rgba(16,24,40,0.12)] z-30 py-1">
+                  <button
+                    type="button"
+                    className="w-full px-3 py-2 text-left text-sm text-[#374151] hover:bg-[#F8F9FB]"
+                    onClick={() => {
+                      setImportOpen(false);
+                      downloadCustomerImportTemplate();
+                    }}
+                  >
+                    Download Template
+                  </button>
+                  <button
+                    type="button"
+                    className="w-full px-3 py-2 text-left text-sm text-[#374151] hover:bg-[#F8F9FB]"
+                    onClick={() => fileInputRef.current?.click()}
+                  >
+                    Upload CSV / Excel
+                  </button>
+                </div>
+              )}
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".csv,.xls,.xlsx,text/csv,application/vnd.ms-excel"
+                className="hidden"
+                onChange={(e) => handleImportFile(e.target.files?.[0] || null)}
+              />
+            </div>
+
             <PermissionGate permission="Customer.Export">
-              <Button variant="secondary" size="sm" icon={Download}>
-                Export
-              </Button>
+              <div className="relative" ref={exportRef}>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  icon={Download}
+                  disabled={exporting}
+                  onClick={() => {
+                    setImportOpen(false);
+                    setExportOpen((v) => !v);
+                  }}
+                >
+                  {exporting ? "Exporting…" : "Export"}
+                </Button>
+                {exportOpen && (
+                  <div className="absolute right-0 top-full mt-2 w-44 bg-white border border-[#E8EAF0] rounded-xl shadow-[0_8px_24px_rgba(16,24,40,0.12)] z-30 py-1">
+                    <button
+                      type="button"
+                      className="w-full px-3 py-2 text-left text-sm text-[#374151] hover:bg-[#F8F9FB]"
+                      onClick={() => runExport("csv")}
+                    >
+                      Export CSV
+                    </button>
+                    <button
+                      type="button"
+                      className="w-full px-3 py-2 text-left text-sm text-[#374151] hover:bg-[#F8F9FB]"
+                      onClick={() => runExport("excel")}
+                    >
+                      Export Excel
+                    </button>
+                    <button
+                      type="button"
+                      className="w-full px-3 py-2 text-left text-sm text-[#374151] hover:bg-[#F8F9FB]"
+                      onClick={() => runExport("pdf")}
+                    >
+                      Export PDF
+                    </button>
+                  </div>
+                )}
+              </div>
             </PermissionGate>
           </div>
         </div>
@@ -311,17 +561,17 @@ export default function CustomersPage() {
             selected
           </p>
           <div className="flex flex-wrap gap-2">
-            <Button variant="secondary" size="sm">
-              Activate
+            <Button variant="secondary" size="sm" icon={Download} onClick={() => runExport("csv")}>
+              Export CSV
             </Button>
-            <Button variant="secondary" size="sm">
-              Deactivate
+            <Button variant="secondary" size="sm" onClick={() => runExport("excel")}>
+              Export Excel
             </Button>
-            <Button variant="secondary" size="sm" icon={Download}>
-              Export
+            <Button variant="secondary" size="sm" onClick={() => runExport("pdf")}>
+              Export PDF
             </Button>
-            <Button variant="danger" size="sm">
-              Delete
+            <Button variant="ghost" size="sm" onClick={() => setSelectedIds([])}>
+              Clear
             </Button>
           </div>
         </div>
@@ -346,6 +596,7 @@ export default function CustomersPage() {
           onSort={handleSort}
           onEdit={goEdit}
           onDelete={handleDelete}
+          onBlock={handleBlock}
           emptyAction={goCreate}
         />
       )}

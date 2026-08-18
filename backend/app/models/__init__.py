@@ -14,7 +14,7 @@ from app.models.availability import (
     VenueAvailabilityLog,
     VenueSlotAvailability,
 )
-from app.models.business_profile import BusinessProfile, BusinessProfileDocument
+from app.models.business_profile import BusinessProfile, BusinessProfileBankAccount, BusinessProfileDocument
 from app.models.customer import Customer
 from app.models.permission import Menu, Permission, RolePermission
 from app.models.role import Role, RoleName
@@ -47,6 +47,7 @@ __all__ = [
     "Invoice",
     "Payment",
     "BusinessProfile",
+    "BusinessProfileBankAccount",
     "BusinessProfileDocument",
     "Customer",
     "EventType",

@@ -1,7 +1,7 @@
 "use client";
 
 import type { ComponentType, ReactNode } from "react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Briefcase,
   Building2,
@@ -40,6 +40,10 @@ import {
   ViewAllButton,
 } from "../../_components/relations";
 import { EntityViewLayout } from "../../_components/layout/EntityViewLayout";
+import { fetchBusinessProfiles, mapBusinessProfileListItem } from "@/lib/business-profiles";
+import { fetchVenues, mapVenueListItem } from "@/lib/venues";
+import { fetchBookings, mapBookingListItem } from "@/lib/bookings";
+import type { BookingStatus } from "@/app/admin/bookings/types";
 
 interface VenueOwnerWorkspaceProps {
   owner: VenueOwner;
@@ -77,6 +81,13 @@ export function VenueOwnerWorkspace({
   const router = useRouter();
   const editable = (mode === "edit" || mode === "create") && !!form && !!onChange;
   const isCreate = mode === "create";
+  const [relatedBusinesses, setRelatedBusinesses] = useState<AssignedBusiness[]>(
+    owner.businesses || []
+  );
+  const [relatedVenues, setRelatedVenues] = useState<VenueOwnerVenue[]>(owner.venues || []);
+  const [relatedBookings, setRelatedBookings] = useState<VenueOwnerBooking[]>(
+    owner.recentBookings || []
+  );
 
   const name = editable
     ? `${form!.firstName} ${form!.lastName}`.trim()
@@ -97,9 +108,87 @@ export function VenueOwnerWorkspace({
       .toUpperCase() || "VO";
   const crumbLabel = pageLabel || name || (isCreate ? "Create Venue Owner" : "Venue Owner");
 
-  const relatedBusinesses = owner.businesses || [];
-  const relatedVenues = owner.venues || [];
-  const relatedBookings = owner.recentBookings || [];
+  useEffect(() => {
+    if (isCreate || !owner.id) {
+      setRelatedBusinesses([]);
+      setRelatedVenues([]);
+      setRelatedBookings([]);
+      return;
+    }
+
+    setRelatedBusinesses(owner.businesses || []);
+    setRelatedVenues(owner.venues || []);
+    setRelatedBookings(owner.recentBookings || []);
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const [bpRes, venueRes, bookingRes] = await Promise.all([
+          fetchBusinessProfiles({
+            venue_owner_id: owner.id,
+            page: 1,
+            page_size: 50,
+            sort_by: "business_name",
+            sort_dir: "asc",
+          }),
+          fetchVenues({
+            venue_owner_id: owner.id,
+            page: 1,
+            page_size: 50,
+            sort_by: "venue_name",
+            sort_dir: "asc",
+          }),
+          fetchBookings({
+            vendor_id: owner.id,
+            page: 1,
+            page_size: 50,
+            sort_by: "created_at",
+            sort_dir: "desc",
+          }),
+        ]);
+        if (cancelled) return;
+
+        setRelatedBusinesses(
+          bpRes.items.map(mapBusinessProfileListItem).map((b) => ({
+            id: b.id,
+            name: b.businessName,
+            businessType: b.businessType || "",
+            city: b.city || "",
+            status: (b.status as AssignedBusiness["status"]) || "pending",
+          }))
+        );
+        setRelatedVenues(
+          venueRes.items.map(mapVenueListItem).map((v) => ({
+            id: v.id,
+            name: v.name,
+            venueType: v.venueType || v.category || "",
+            capacity: v.seatingCapacity ?? null,
+            city: v.city || "",
+            status: String(v.status || ""),
+          }))
+        );
+        setRelatedBookings(
+          bookingRes.items.map(mapBookingListItem).map((b) => ({
+            id: b.id,
+            bookingId: b.bookingId,
+            venue: b.venueName || "",
+            customer: b.customerName || "",
+            eventType: b.eventType || "",
+            amount: b.bookingAmount || 0,
+            status: mapOwnerBookingStatus(b.bookingStatus),
+            date: b.eventDate || "",
+          }))
+        );
+      } catch {
+        // Keep detail-payload fallbacks already set above.
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [owner.id, isCreate, owner.businesses, owner.venues, owner.recentBookings]);
+
   const overview = owner.overview || {
     businessProfilesCount: owner.assignedBusinesses || 0,
     venuesCount: owner.totalVenues || 0,
@@ -448,33 +537,49 @@ export function VenueOwnerWorkspace({
             !isCreate ? (
               <>
                 <RelationCard
+                  id="owner-businesses"
                   icon={Briefcase}
                   title="Business Profiles"
                   subtitle="Business profiles owned by this venue owner"
                   defaultOpen
                   actions={
-                    <ViewAllButton href="/admin/business-profile" label="View All" />
+                    <ViewAllButton
+                      href={`/admin/business-profile?owner=${owner.id}`}
+                      label="View All"
+                    />
                   }
                 >
                   <OwnerBusinessesTable businesses={relatedBusinesses} />
                 </RelationCard>
 
                 <RelationCard
+                  id="owner-venues"
                   icon={Building2}
                   title="Venues"
                   subtitle="Venues owned by this venue owner"
                   defaultOpen
-                  actions={<ViewAllButton href="/admin/venues" label="View All" />}
+                  actions={
+                    <ViewAllButton
+                      href={`/admin/venues?ownerId=${owner.id}`}
+                      label="View All"
+                    />
+                  }
                 >
                   <OwnerVenuesTable venues={relatedVenues} />
                 </RelationCard>
 
                 <RelationCard
+                  id="owner-bookings"
                   icon={CalendarDays}
                   title="Bookings"
                   subtitle="Bookings across all venues owned by this venue owner"
                   defaultOpen
-                  actions={<ViewAllButton href="/admin/bookings" label="View All Bookings" />}
+                  actions={
+                    <ViewAllButton
+                      href={`/admin/bookings?vendor=${owner.id}`}
+                      label="View All Bookings"
+                    />
+                  }
                 >
                   <OwnerBookingsTable bookings={relatedBookings} />
                 </RelationCard>
@@ -485,6 +590,13 @@ export function VenueOwnerWorkspace({
       </div>
     </div>
   );
+}
+
+function mapOwnerBookingStatus(status: BookingStatus | string): VenueOwnerBooking["status"] {
+  if (status === "cancelled" || status === "rejected") return "cancelled";
+  if (status === "completed" || status === "refunded") return "completed";
+  if (status === "pending") return "pending";
+  return "upcoming";
 }
 
 function FormActionBar({

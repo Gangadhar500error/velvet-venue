@@ -99,13 +99,16 @@ class SlotValidationService:
         active = [s for s in slots if s.enabled]
         names: set[str] = set()
         timed: list[tuple[str, time, time]] = []
+        full_day_count = 0
         for slot in active:
-            key = slot.name.strip().lower()
+            key = (slot.name or "").strip().lower()
             if key in names:
                 raise PricingValidationError(
                     f"Duplicate slot name '{slot.name}' is not allowed."
                 )
             names.add(key)
+            if key == "full day":
+                full_day_count += 1
             start, end = _resolved_times(slot)
             if start and end:
                 if end <= start:
@@ -119,10 +122,13 @@ class SlotValidationService:
                         )
                 timed.append((slot.name, start, end))
             if require_positive_price and slot.price <= 0:
-                raise PricingValidationError(f"Slot '{slot.name}' price must be greater than 0.")
+                if pricing_mode == "full_day" and key == "full day":
+                    raise PricingValidationError(f"Slot '{slot.name}' price must be greater than 0.")
+                elif pricing_mode == "slot_based" and key != "full day":
+                    raise PricingValidationError(f"Slot '{slot.name}' price must be greater than 0.")
 
-        if pricing_mode == "full_day" and len(active) > 1:
-            raise PricingValidationError("Full day pricing allows only one price.")
+        if full_day_count > 1:
+            raise PricingValidationError("Full day pricing allows only one full day price.")
 
 
 class FoodValidationService:

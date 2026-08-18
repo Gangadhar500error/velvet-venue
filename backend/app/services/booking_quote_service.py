@@ -127,7 +127,10 @@ class BookingQuoteService:
             booking_type=booking_type,
             booking_mode=booking_mode,
         )
-        if date_slots:
+        if booking_type == "venue_food":
+            quote.slots = []
+            quote.venue_price = Decimal("0")
+        elif date_slots:
             dated = [item for item in date_slots if item.event_date]
             extra_dates = [item.event_date for item in dated if item.event_date not in quote.dates]
             if extra_dates:
@@ -147,6 +150,7 @@ class BookingQuoteService:
                             price=Decimal(slot.slot_price or 0),
                         )
                     )
+            quote.venue_price = sum((item.price for item in quote.slots), Decimal("0"))
         else:
             venue_slots = self.resolve_slots(
                 pricing, slot_ids=slot_ids, slot_keys=slot_keys, booking_mode=booking_mode
@@ -158,7 +162,7 @@ class BookingQuoteService:
                             slot=slot, event_date=event_date, price=Decimal(slot.slot_price or 0)
                         )
                     )
-        quote.venue_price = sum((item.price for item in quote.slots), Decimal("0"))
+            quote.venue_price = sum((item.price for item in quote.slots), Decimal("0"))
 
         if booking_type == "venue_food":
             for event_date in quote.dates:
@@ -178,6 +182,9 @@ class BookingQuoteService:
                         )
                     )
             quote.food_total = sum((item.subtotal for item in quote.foods), Decimal("0"))
+        else:
+            quote.foods = []
+            quote.food_total = Decimal("0")
 
         for service in services:
             qty = max(int(service.quantity or 1), 1)

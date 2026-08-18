@@ -32,6 +32,7 @@ interface CustomerTableProps {
   onSort: (key: string) => void;
   onEdit: (customer: Customer) => void;
   onDelete: (customer: Customer) => void;
+  onBlock: (customer: Customer) => void;
   emptyAction?: () => void;
 }
 
@@ -46,7 +47,7 @@ const columnLabels: Partial<Record<CustomerColumnKey | string, string>> = {
   registrationDate: "Registration Date",
   verification: "Verification",
   status: "Status",
-  lastLogin: "Last Login",
+  // lastLogin: "Last Login",
   actions: "Actions",
 };
 
@@ -62,6 +63,7 @@ export function CustomerTable({
   onSort,
   onEdit,
   onDelete,
+  onBlock,
   emptyAction,
 }: CustomerTableProps) {
   const router = useRouter();
@@ -156,7 +158,7 @@ export function CustomerTable({
               )}
               {visibleColumns.verification && <Th>Verification</Th>}
               {visibleColumns.status && <Th>Status</Th>}
-              {visibleColumns.lastLogin && <Th>Last Login</Th>}
+              {/* {visibleColumns.lastLogin && <Th>Last Login</Th>} */}
               {visibleColumns.actions && <Th className="text-center">Actions</Th>}
             </tr>
           </thead>
@@ -250,13 +252,13 @@ export function CustomerTable({
                       <StatusBadge status={customer.status} />
                     </td>
                   )}
-                  {visibleColumns.lastLogin && (
+                  {/* {visibleColumns.lastLogin && (
                     <td className={`px-4 ${rowPad}`}>
                       <span className="text-sm text-[#6B7280] whitespace-nowrap">
                         {formatDateTime(customer.lastLogin)}
                       </span>
                     </td>
-                  )}
+                  )} */}
                   {visibleColumns.actions && (
                     <td className={`px-4 ${rowPad} text-center`}>
                       <RowActions
@@ -264,6 +266,7 @@ export function CustomerTable({
                         onView={() => router.push(`/admin/customers/${customer.id}`)}
                         onEdit={() => onEdit(customer)}
                         onDelete={() => onDelete(customer)}
+                        onBlock={() => onBlock(customer)}
                       />
                     </td>
                   )}
@@ -324,14 +327,18 @@ function RowActions({
   onView,
   onEdit,
   onDelete,
+  onBlock,
 }: {
   customer: Customer;
   onView: () => void;
   onEdit: () => void;
   onDelete: () => void;
+  onBlock: () => void;
 }) {
+  const router = useRouter();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const isBlocked = customer.status === "blocked";
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -344,12 +351,29 @@ function RowActions({
   const items = [
     { label: "View", icon: Eye, onClick: onView },
     { label: "Edit", icon: Pencil, onClick: onEdit },
-    { label: "Clone Customer", icon: Copy, onClick: () => {} },
-    { label: "View Bookings", icon: CalendarDays, onClick: () => {} },
-    { label: "View Transactions", icon: Receipt, onClick: () => {} },
-    { label: "Send Email", icon: Mail, onClick: () => {} },
-    { label: "Reset Password", icon: KeyRound, onClick: () => {} },
-    { label: "Block", icon: Ban, onClick: () => {}, danger: false },
+    {
+      label: "Clone Customer",
+      icon: Copy,
+      onClick: () => router.push(`/admin/customers/create?clone=${customer.id}`),
+    },
+    {
+      label: "View Bookings",
+      icon: CalendarDays,
+      onClick: () => router.push(`/admin/customers/${customer.id}#customer-bookings`),
+    },
+    {
+      label: "View Transactions",
+      icon: Receipt,
+      onClick: () => router.push(`/admin/customers/${customer.id}#customer-invoices`),
+    },
+    // { label: "Send Email", icon: Mail, onClick: () => {} },
+    // { label: "Reset Password", icon: KeyRound, onClick: () => {} },
+    {
+      label: isBlocked ? "Unblock" : "Block",
+      icon: Ban,
+      onClick: onBlock,
+      danger: !isBlocked,
+    },
     { label: "Delete", icon: Trash2, onClick: onDelete, danger: true },
   ];
 

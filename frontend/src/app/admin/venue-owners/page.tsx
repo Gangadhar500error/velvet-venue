@@ -16,18 +16,32 @@ import { FilterPanel } from "./components/FilterPanel";
 import { VenueOwnerTable, columnLabels } from "./components/VenueOwnerTable";
 import { confirmAction, notify } from "../_components/ui/Toast";
 import {
+  RegistrationSource,
   VenueOwner,
   VenueOwnerColumnKey,
   VenueOwnerFilters,
+  VenueOwnerFormValues,
+  VenueOwnerStatus,
+  VerificationStatus,
 } from "./types";
 import {
+  createVenueOwner,
   deleteVenueOwner,
+  fetchAllVenueOwnersForExport,
   fetchVenueOwners,
   filtersToParams,
+  formToCreatePayload,
   mapVenueOwnerListItem,
   updateVenueOwner,
 } from "@/lib/venue-owners";
 import { PermissionGate } from "@/components/PermissionGate";
+import {
+  downloadVenueOwnerImportTemplate,
+  exportVenueOwnersCsv,
+  exportVenueOwnersExcel,
+  exportVenueOwnersPdf,
+  parseVenueOwnerImportFile,
+} from "./io";
 
 const defaultFilters: VenueOwnerFilters = {
   search: "",
@@ -53,6 +67,26 @@ const defaultColumns: Record<VenueOwnerColumnKey, boolean> = {
   actions: true,
 };
 
+type ExportFormat = "csv" | "excel" | "pdf";
+
+function normalizeStatus(value?: string): VenueOwnerStatus {
+  const v = (value || "").toLowerCase();
+  if (v === "inactive" || v === "pending") return v;
+  return "active";
+}
+
+function normalizeVerification(value?: string): VerificationStatus {
+  const v = (value || "").toLowerCase();
+  if (v === "verified" || v === "rejected") return v;
+  return "pending";
+}
+
+function normalizeSource(value?: string): RegistrationSource {
+  const v = (value || "").toLowerCase().replace(/\s+/g, "_");
+  if (v === "referral" || v === "admin" || v === "website") return v;
+  return "admin";
+}
+
 export default function VenueOwnersPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
@@ -69,8 +103,15 @@ export default function VenueOwnersPage() {
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [visibleColumns, setVisibleColumns] = useState(defaultColumns);
   const [columnsOpen, setColumnsOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [importing, setImporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const columnsRef = useRef<HTMLDivElement>(null);
+  const exportRef = useRef<HTMLDivElement>(null);
+  const importRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const loadOwners = useCallback(async () => {
@@ -100,6 +141,12 @@ export default function VenueOwnersPage() {
     const handler = (e: MouseEvent) => {
       if (columnsRef.current && !columnsRef.current.contains(e.target as Node)) {
         setColumnsOpen(false);
+      }
+      if (exportRef.current && !exportRef.current.contains(e.target as Node)) {
+        setExportOpen(false);
+      }
+      if (importRef.current && !importRef.current.contains(e.target as Node)) {
+        setImportOpen(false);
       }
     };
     document.addEventListener("mousedown", handler);
@@ -156,7 +203,16 @@ export default function VenueOwnersPage() {
   };
 
   const handleToggleStatus = async (owner: VenueOwner) => {
-    const next = owner.status === "active" ? "inactive" : "active";
+    const nextStatus: VenueOwnerStatus = owner.status === "active" ? "inactive" : "active";
+    const ok = await confirmAction({
+      title: nextStatus === "active" ? "Activate Venue Owner?" : "Deactivate Venue Owner?",
+      message:
+        nextStatus === "active"
+          ? `Activate ${owner.name}? Their status will be set to Active.`
+          : `Deactivate ${owner.name}? Their status will be set to Inactive.`,
+      confirmLabel: nextStatus === "active" ? "Activate" : "Deactivate",
+    });
+    if (!ok) return;
     try {
       await updateVenueOwner(owner.id, {
         first_name: owner.firstName,
@@ -167,7 +223,7 @@ export default function VenueOwnersPage() {
         gender: owner.gender || null,
         business_name: owner.businessName || null,
         business_type: owner.businessType || null,
-        status: next,
+        status: nextStatus,
         verification_status: owner.verification,
         address_line1: owner.addressLine1 || null,
         address_line2: owner.addressLine2 || null,
@@ -176,7 +232,11 @@ export default function VenueOwnersPage() {
         country: owner.country || null,
         postal_code: owner.zipCode || null,
       });
-      notify.updated("Venue Owner");
+      notify.statusUpdated(
+        nextStatus === "active"
+          ? `${owner.name} has been activated.`
+          : `${owner.name} has been deactivated.`
+      );
       await loadOwners();
     } catch (err) {
       notify.error(err instanceof Error ? err.message : "Status update failed");
@@ -191,8 +251,106 @@ export default function VenueOwnersPage() {
     }, 350);
   };
 
+  const resolveExportRows = useCallback(async () => {
+    if (selectedIds.length > 0) {
+      return owners.filter((o) => selectedIds.includes(o.id));
+    }
+    return fetchAllVenueOwnersForExport(appliedFilters, sortKey, sortDir);
+  }, [selectedIds, owners, appliedFilters, sortKey, sortDir]);
+
+  const runExport = async (format: ExportFormat) => {
+    setExportOpen(false);
+    setExporting(true);
+    try {
+      const rows = await resolveExportRows();
+      if (!rows.length) {
+        notify.error("No venue owners to export.");
+        return;
+      }
+      const stamp = new Date().toISOString().slice(0, 10);
+      if (format === "csv") {
+        exportVenueOwnersCsv(rows, `venue-owners-${stamp}.csv`);
+        notify.exported();
+        return;
+      }
+      if (format === "excel") {
+        exportVenueOwnersExcel(rows, `venue-owners-${stamp}.xls`);
+        notify.exported();
+        return;
+      }
+      exportVenueOwnersPdf(rows, stamp);
+      notify.exported();
+    } catch (err) {
+      notify.error(err instanceof Error ? err.message : "Export failed");
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const handleImportFile = async (file: File | null) => {
+    if (!file) return;
+    setImportOpen(false);
+    setImporting(true);
+    try {
+      const rows = await parseVenueOwnerImportFile(file);
+      if (!rows.length) {
+        notify.error("No valid venue owner rows found in the file.");
+        return;
+      }
+
+      let created = 0;
+      let existed = 0;
+      let failed = 0;
+
+      for (const row of rows) {
+        const form: VenueOwnerFormValues = {
+          firstName: row.firstName,
+          lastName: row.lastName,
+          email: row.email,
+          phone: row.mobile,
+          alternateMobile: "",
+          gender: "",
+          businessName: row.businessName || "",
+          businessType: row.businessType || "",
+          city: row.city || "",
+          country: row.country || "India",
+          addressLine1: row.addressLine1 || "",
+          addressLine2: "",
+          state: row.state || "",
+          zipCode: "",
+          source: normalizeSource(row.source),
+          status: normalizeStatus(row.status),
+          verification: normalizeVerification(row.verification),
+        };
+        try {
+          const result = await createVenueOwner({
+            ...formToCreatePayload(form),
+            return_existing: true,
+          });
+          if (result.existed) existed += 1;
+          else created += 1;
+        } catch {
+          failed += 1;
+        }
+      }
+
+      notify.imported();
+      if (failed > 0 || existed > 0) {
+        notify.statusUpdated(
+          `Import finished: ${created} created, ${existed} already existed, ${failed} failed.`
+        );
+      }
+      await loadOwners();
+    } catch (err) {
+      notify.error(err instanceof Error ? err.message : "Import failed");
+    } finally {
+      setImporting(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
   return (
-    <div className="space-y-4 animate-fadeIn">
+    <div className="flex flex-col gap-4 animate-fadeIn">
       <PageHeader
         title="Venue Owners"
         subtitle="Manage venue owners, business profiles, verification, and account lifecycle."
@@ -280,13 +438,92 @@ export default function VenueOwnersPage() {
             </div>
 
             <div className="hidden sm:block w-px h-7 bg-[#E8EAF0] mx-0.5" aria-hidden />
-            <Button variant="secondary" size="sm" icon={Upload}>
-              Import
-            </Button>
+
+            <div className="relative" ref={importRef}>
+              <PermissionGate permission="Vendor.Create">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  icon={Upload}
+                  disabled={importing}
+                  onClick={() => {
+                    setExportOpen(false);
+                    setImportOpen((v) => !v);
+                  }}
+                >
+                  {importing ? "Importing…" : "Import"}
+                </Button>
+              </PermissionGate>
+              {importOpen && (
+                <div className="absolute right-0 top-full mt-2 w-52 bg-white border border-[#E8EAF0] rounded-xl shadow-[0_8px_24px_rgba(16,24,40,0.12)] z-30 py-1">
+                  <button
+                    type="button"
+                    className="w-full px-3 py-2 text-left text-sm text-[#374151] hover:bg-[#F8F9FB]"
+                    onClick={() => {
+                      setImportOpen(false);
+                      downloadVenueOwnerImportTemplate();
+                    }}
+                  >
+                    Download Template
+                  </button>
+                  <button
+                    type="button"
+                    className="w-full px-3 py-2 text-left text-sm text-[#374151] hover:bg-[#F8F9FB]"
+                    onClick={() => fileInputRef.current?.click()}
+                  >
+                    Upload CSV / Excel
+                  </button>
+                </div>
+              )}
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".csv,.xls,.xlsx,text/csv,application/vnd.ms-excel"
+                className="hidden"
+                onChange={(e) => handleImportFile(e.target.files?.[0] || null)}
+              />
+            </div>
+
             <PermissionGate permission="Vendor.Export">
-              <Button variant="secondary" size="sm" icon={Download}>
-                Export
-              </Button>
+              <div className="relative" ref={exportRef}>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  icon={Download}
+                  disabled={exporting}
+                  onClick={() => {
+                    setImportOpen(false);
+                    setExportOpen((v) => !v);
+                  }}
+                >
+                  {exporting ? "Exporting…" : "Export"}
+                </Button>
+                {exportOpen && (
+                  <div className="absolute right-0 top-full mt-2 w-44 bg-white border border-[#E8EAF0] rounded-xl shadow-[0_8px_24px_rgba(16,24,40,0.12)] z-30 py-1">
+                    <button
+                      type="button"
+                      className="w-full px-3 py-2 text-left text-sm text-[#374151] hover:bg-[#F8F9FB]"
+                      onClick={() => runExport("csv")}
+                    >
+                      Export CSV
+                    </button>
+                    <button
+                      type="button"
+                      className="w-full px-3 py-2 text-left text-sm text-[#374151] hover:bg-[#F8F9FB]"
+                      onClick={() => runExport("excel")}
+                    >
+                      Export Excel
+                    </button>
+                    <button
+                      type="button"
+                      className="w-full px-3 py-2 text-left text-sm text-[#374151] hover:bg-[#F8F9FB]"
+                      onClick={() => runExport("pdf")}
+                    >
+                      Export PDF
+                    </button>
+                  </div>
+                )}
+              </div>
             </PermissionGate>
           </div>
         </div>
@@ -316,6 +553,45 @@ export default function VenueOwnersPage() {
           {error}
         </div>
       ) : null}
+
+      {selectedIds.length > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-[14px] border border-[#C89B3C]/20 bg-[#FFF3EB] px-4 py-3">
+          <p className="text-sm font-medium text-[#111827]">
+            <span className="text-[#C89B3C] font-semibold">{selectedIds.length}</span> venue
+            owners selected
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              icon={Download}
+              disabled={exporting}
+              onClick={() => runExport("csv")}
+            >
+              Export CSV
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={exporting}
+              onClick={() => runExport("excel")}
+            >
+              Export Excel
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={exporting}
+              onClick={() => runExport("pdf")}
+            >
+              Export PDF
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => setSelectedIds([])}>
+              Clear
+            </Button>
+          </div>
+        </div>
+      )}
 
       {loading ? (
         <div className="bg-white border border-[#E8EAF0] rounded-[14px] p-6 animate-pulse space-y-3">

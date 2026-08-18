@@ -90,7 +90,14 @@ class CustomerService:
             average_booking=(spend / total) if total else 0.0,
         )
 
-    def _to_list_item(self, customer: Customer) -> CustomerListItem:
+    def _to_list_item(
+        self,
+        customer: Customer,
+        *,
+        bookings: int = 0,
+        lifetime_spend: float = 0.0,
+        last_booking_date: date | None = None,
+    ) -> CustomerListItem:
         return CustomerListItem(
             id=customer.id,
             customer_code=customer.customer_code,
@@ -109,9 +116,9 @@ class CustomerService:
             customer_type=customer.customer_type,
             profile_image=customer.profile_image,
             created_at=customer.created_at,
-            bookings=0,
-            lifetime_spend=0.0,
-            last_booking_date=None,
+            bookings=bookings,
+            lifetime_spend=lifetime_spend,
+            last_booking_date=last_booking_date,
             initials=_initials(customer.full_name),
         )
 
@@ -189,6 +196,30 @@ class CustomerService:
                     amount=float(i.amount),
                     status=i.invoice_status,
                     issued_at=i.issued_at,
+                    invoice_type=i.invoice_type or "booking",
+                    gst_amount=float(i.gst_amount or 0),
+                    booking_id=i.booking.id if i.booking else i.booking_id,
+                    booking_number=i.booking.booking_number if i.booking else "",
+                    venue_id=i.booking.venue_id if i.booking else None,
+                    venue_name=(
+                        i.booking.venue.venue_name
+                        if i.booking and i.booking.venue
+                        else ""
+                    ),
+                    business_profile_id=(
+                        i.booking.business_profile_id if i.booking else None
+                    ),
+                    business_name=(
+                        i.booking.business_profile.business_name
+                        if i.booking and i.booking.business_profile
+                        else ""
+                    ),
+                    paid_amount=float(i.booking.paid_amount) if i.booking else 0.0,
+                    remaining_amount=(
+                        float(i.booking.remaining_amount) if i.booking else 0.0
+                    ),
+                    payment_status=i.booking.payment_status if i.booking else "pending",
+                    payment_method=i.booking.payment_method if i.booking else None,
                 )
                 for i in await self.bookings.list_recent_invoices_for_customer(customer.id)
             ],
@@ -316,9 +347,18 @@ class CustomerService:
             page_size=page_size,
             user_id=self._scoped_user_id(actor),
         )
+        stats = await self.bookings.stats_for_customers([c.id for c in rows])
         total_pages = max(1, math.ceil(total / page_size)) if page_size else 1
         return CustomerListResponse(
-            items=[self._to_list_item(c) for c in rows],
+            items=[
+                self._to_list_item(
+                    c,
+                    bookings=stats.get(c.id, {}).get("bookings", 0),
+                    lifetime_spend=float(stats.get(c.id, {}).get("lifetime_spend", 0) or 0),
+                    last_booking_date=stats.get(c.id, {}).get("last_booking_date"),
+                )
+                for c in rows
+            ],
             total=total,
             page=page,
             page_size=page_size,

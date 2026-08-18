@@ -71,7 +71,10 @@ async def seed_users(session, roles: dict) -> None:
 
         existing = await user_repo.get_by_email(email)
         if existing:
-            logger.info("User already exists, skipped: %s", email)
+            existing.is_active = True
+            existing.status = "active"
+            existing.password_hash = hash_password(password)
+            logger.info("User already exists, updated active status: %s", email)
             continue
 
         user = User(

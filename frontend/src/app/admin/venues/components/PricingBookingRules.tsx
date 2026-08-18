@@ -4,6 +4,7 @@ import { useState, type ComponentType, type ReactNode } from "react";
 import {
   Building2,
   Calculator,
+  Check,
   ChevronDown,
   Plus,
   Trash2,
@@ -43,8 +44,26 @@ interface PricingBookingRulesProps {
 }
 
 export function PricingBookingRules({ form, venue, onChange, editable }: PricingBookingRulesProps) {
-  const bookingModel = (form?.bookingModel ?? venue?.bookingModel ?? "venue_only") as BookingModel;
+  const storedBookingTypes = (form?.bookingTypes ?? venue?.bookingTypes ?? (venue?.bookingModel ? [venue.bookingModel] : ["venue_only"])) as BookingModel[];
+  const bookingTypes: BookingModel[] =
+    Array.isArray(storedBookingTypes) && storedBookingTypes.length > 0
+      ? storedBookingTypes
+      : ["venue_only"];
+
+  const storedModel = (form?.bookingModel ?? venue?.bookingModel ?? bookingTypes[0] ?? "venue_only") as BookingModel;
+  const storedMethod = normalizeMethod(form?.pricingMethod ?? venue?.pricingMethod ?? "full_day");
+
+  /** View mode: allow switching tabs without mutating saved venue data. */
+  const [previewModel, setPreviewModel] = useState<BookingModel | null>(null);
+  const [previewMethod, setPreviewMethod] = useState<PricingMethod | null>(null);
+
+  const rawBookingModel = (editable ? storedModel : previewModel ?? storedModel) as BookingModel;
+  const bookingModel: BookingModel = bookingTypes.includes(rawBookingModel)
+    ? rawBookingModel
+    : bookingTypes[0] || "venue_only";
+
   const isVenueFood = bookingModel === "venue_food";
+  const venueMethod = editable ? storedMethod : previewMethod ?? storedMethod;
 
   const slots = (form?.pricingSlots ?? venue?.pricingSlots ?? []) as PricingSlot[];
   const foodSlots = (form?.foodSlots ?? venue?.foodSlots ?? []) as FoodSlot[];
@@ -59,8 +78,6 @@ export function PricingBookingRules({ form, venue, onChange, editable }: Pricing
 
   const gstPercent = form?.gstPercent ?? String(venue?.gstPercent ?? 18);
   const advancePercent = String(form?.advancePaymentPercent ?? venue?.advancePaymentPercent ?? "");
-
-  const venueMethod = normalizeMethod(form?.pricingMethod ?? venue?.pricingMethod ?? "full_day");
 
   const [open, setOpen] = useState<Record<string, boolean>>({
     pricingModel: true,
@@ -176,9 +193,16 @@ export function PricingBookingRules({ form, venue, onChange, editable }: Pricing
   };
 
   const setVenueMethod = (method: PricingMethod) => {
+    if (!editable) {
+      setPreviewMethod(method);
+      return;
+    }
     change("pricingMethod", method);
     if (method === "full_day") ensureFullDaySlot();
   };
+
+  const operatingHours = String(form?.operatingHours ?? venue?.operatingHours ?? "09:00 - 23:00");
+  const { start: opStart, end: opEnd } = parseTimeLabel(operatingHours);
 
   // ---- Preview calculations ----
   const effectiveMode: "full_day" | "slot" = isVenueFood
@@ -268,40 +292,153 @@ export function PricingBookingRules({ form, venue, onChange, editable }: Pricing
     </div>
   );
 
+  const toggleBookingType = (type: BookingModel) => {
+    if (!editable) return;
+    let next: BookingModel[];
+    if (bookingTypes.includes(type)) {
+      if (bookingTypes.length <= 1) {
+        return; // Keep at least one selected
+      }
+      next = bookingTypes.filter((t) => t !== type);
+    } else {
+      next = [...bookingTypes, type];
+    }
+    change("bookingTypes", next);
+    if (!next.includes(bookingModel)) {
+      const fallback = next[0];
+      change("bookingModel", fallback);
+      if (fallback === "venue_food") {
+        change("foodPricingMethod", "slot_based");
+      }
+    }
+  };
+
   return (
-    <div className="space-y-2.5">
-      {/* Booking Model tabs */}
-      <div className="bg-white border border-[#E8EAF0] rounded-[14px] px-2 pt-1">
-        <div className="flex items-center gap-1">
-          {(
-            [
-              { value: "venue_only" as BookingModel, label: "Venue Only" },
-              { value: "venue_food" as BookingModel, label: "Venue + Food" },
-            ] as const
-          ).map((tab) => {
-            const active = bookingModel === tab.value;
+    <div className="space-y-3">
+      {/* Multi-Select Field: Supported Booking Types */}
+      <div className="bg-white border border-[#E8EAF0] rounded-[14px] p-4 sm:p-5">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1.5 mb-3.5">
+          <div>
+            <div className="flex items-center gap-2">
+              <label className="text-[13px] font-semibold text-[#111827]">
+                Supported Booking Type(s) <span className="text-red-500">*</span>
+              </label>
+              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[#FFF8F3] text-[#C89B3C] border border-[#C89B3C]/30 tracking-wide uppercase">
+                Multi-Select
+              </span>
+            </div>
+            <p className="text-[12px] text-[#6B7280] mt-0.5">
+              Select all booking offerings supported by this venue (Venue Only, Venue + Food, or both). Stored in the venue table as booking_type.
+            </p>
+          </div>
+          {bookingTypes.length === 2 && (
+            <span className="self-start sm:self-auto text-[11px] font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md">
+              Both Venue Only & Venue + Food Enabled
+            </span>
+          )}
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {[
+            {
+              value: "venue_only" as BookingModel,
+              title: "Venue Only",
+              desc: "Space rental only (full day or slot-based pricing)",
+              icon: Building2,
+            },
+            {
+              value: "venue_food" as BookingModel,
+              title: "Venue + Food",
+              desc: "Space rental inclusive of meal packages & in-house catering slots",
+              icon: UtensilsCrossed,
+            },
+          ].map((item) => {
+            const isSelected = bookingTypes.includes(item.value);
+            const Icon = item.icon;
             return (
               <button
-                key={tab.value}
+                key={item.value}
                 type="button"
-                disabled={!editable && !active}
-                onClick={() => {
-                  if (!editable) return;
-                  change("bookingModel", tab.value);
-                  if (tab.value === "venue_food") {
-                    change("foodPricingMethod", "slot_based");
-                  }
-                }}
-                className={`px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors ${
-                  active
-                    ? "border-[#C89B3C] text-[#C89B3C]"
-                    : "border-transparent text-[#6B7280] hover:text-[#111827]"
-                } ${!editable ? "cursor-default" : ""}`}
+                disabled={!editable}
+                onClick={() => toggleBookingType(item.value)}
+                className={`flex items-start gap-3 p-3.5 rounded-[12px] border text-left transition-all relative ${
+                  isSelected
+                    ? "border-[#C89B3C] bg-[#FFFDF9] ring-1 ring-[#C89B3C]/40 shadow-xs"
+                    : "border-[#E8EAF0] bg-[#FCFCFD] hover:border-[#CBD5E1]"
+                } ${!editable ? "cursor-default opacity-90" : "cursor-pointer"}`}
               >
-                {tab.label}
+                <div
+                  className={`w-5 h-5 mt-0.5 rounded flex items-center justify-center border transition-colors shrink-0 ${
+                    isSelected
+                      ? "bg-[#C89B3C] border-[#C89B3C] text-white shadow-xs"
+                      : "border-[#D1D5DB] bg-white text-transparent"
+                  }`}
+                >
+                  <Check className="w-3.5 h-3.5 stroke-[3]" />
+                </div>
+                <div className="flex-1 min-w-0 pr-1">
+                  <div className="flex items-center gap-1.5">
+                    <Icon className={`w-4 h-4 ${isSelected ? "text-[#C89B3C]" : "text-[#6B7280]"}`} />
+                    <span className="text-sm font-semibold text-[#111827]">{item.title}</span>
+                    {isSelected && (
+                      <span className="text-[10px] font-medium text-[#C89B3C] bg-[#FFF8F3] px-1.5 py-0.2 rounded border border-[#C89B3C]/20 ml-auto">
+                        Active
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-[12px] text-[#6B7280] mt-0.5 leading-snug">{item.desc}</p>
+                </div>
               </button>
             );
           })}
+        </div>
+      </div>
+
+      {/* Booking Configuration Sub-Tabs (Venue Only / Venue + Food) */}
+      <div className="bg-white border border-[#E8EAF0] rounded-[14px] px-3 pt-1">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-1">
+            {(
+              [
+                { value: "venue_only" as BookingModel, label: "Venue Only", icon: Building2 },
+                { value: "venue_food" as BookingModel, label: "Venue + Food", icon: UtensilsCrossed },
+              ] as const
+            )
+              .filter((tab) => bookingTypes.includes(tab.value))
+              .map((tab) => {
+                const active = bookingModel === tab.value;
+                const Icon = tab.icon;
+                return (
+                  <button
+                    key={tab.value}
+                    type="button"
+                    onClick={() => {
+                      if (!editable) {
+                        setPreviewModel(tab.value);
+                        return;
+                      }
+                      change("bookingModel", tab.value);
+                      if (tab.value === "venue_food") {
+                        change("foodPricingMethod", "slot_based");
+                      }
+                    }}
+                    className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors ${
+                      active
+                        ? "border-[#C89B3C] text-[#C89B3C]"
+                        : "border-transparent text-[#6B7280] hover:text-[#111827]"
+                    }`}
+                  >
+                    <Icon className="w-4 h-4" />
+                    <span>Configure {tab.label}</span>
+                  </button>
+                );
+              })}
+          </div>
+          {bookingTypes.length > 1 && (
+            <span className="text-[11px] text-[#6B7280] py-2 sm:py-0 pr-2">
+              Configure rates & slots for each active booking type
+            </span>
+          )}
         </div>
       </div>
 
@@ -322,13 +459,12 @@ export function PricingBookingRules({ form, venue, onChange, editable }: Pricing
                 <button
                   key={opt.value}
                   type="button"
-                  disabled={!editable}
                   onClick={() => setVenueMethod(opt.value)}
                   className={`h-9 px-3.5 rounded-lg border text-[13px] font-medium transition-colors ${
                     active
                       ? "border-[#C89B3C] bg-[#FFF8F3] text-[#C89B3C]"
                       : "border-[#E8EAF0] text-[#4B5563] hover:border-[#C89B3C]/50"
-                  } ${!editable ? "cursor-default" : ""}`}
+                  }`}
                 >
                   {opt.label}
                 </button>
@@ -364,81 +500,7 @@ export function PricingBookingRules({ form, venue, onChange, editable }: Pricing
         </PricingSection>
       )}
 
-      {showSlots && (
-        <PricingSection
-          id="slotPricing"
-          icon={Building2}
-          title="Slot Pricing"
-          open={open.slotPricing}
-          onToggle={toggle}
-          actions={
-            editable ? (
-              <HeaderAction icon={Plus} label="Add Slot" onClick={addTimedSlot} />
-            ) : undefined
-          }
-        >
-          {timedSlots.length === 0 ? (
-            <p className="text-sm text-[#6B7280]">
-              No slots yet. Add Morning, Afternoon, Evening, or any custom slot.
-            </p>
-          ) : (
-            <div className="space-y-2.5">
-              {timedSlots.map((slot) => (
-                <VenueSlotCard
-                  key={slot.id}
-                  slot={slot}
-                  editable={editable}
-                  allNames={timedSlots.map((s) => s.name)}
-                  onChange={(patch) => updateSlot(slot.id, patch)}
-                  onDelete={() => removeTimedSlot(slot.id)}
-                />
-              ))}
-            </div>
-          )}
-          <div className="mt-3">{advanceGstFields}</div>
-        </PricingSection>
-      )}
-
-      {/* ========== VENUE + FOOD — Food Slots only (no pricing model) ========== */}
-      {showFoodSlots && (
-        <PricingSection
-          id="foodSlots"
-          icon={UtensilsCrossed}
-          title="Food Slots"
-          open={open.foodSlots}
-          onToggle={toggle}
-          actions={
-            editable ? (
-              <HeaderAction icon={Plus} label="Add Food Slot" onClick={addFoodSlot} />
-            ) : undefined
-          }
-        >
-          {foodSlots.length === 0 ? (
-            <p className="text-sm text-[#6B7280]">
-              No meal slots yet. Add Breakfast, Lunch, Dinner, or any custom meal.
-            </p>
-          ) : (
-            <div className="space-y-2.5">
-              {foodSlots.map((slot) => (
-                <FoodSlotCard
-                  key={slot.id}
-                  slot={slot}
-                  editable={editable}
-                  allNames={foodSlots.map((s) => s.name)}
-                  onChange={(patch) => updateFoodSlot(slot.id, patch)}
-                  onDelete={() => removeFoodSlot(slot.id)}
-                />
-              ))}
-            </div>
-          )}
-          <div className="mt-3">{advanceGstFields}</div>
-          <p className="mt-2.5 text-[12px] text-[#6B7280]">
-            Per-plate price includes venue cost. Booking amount = plate price × guest count.
-          </p>
-        </PricingSection>
-      )}
-
-      {/* Booking Rules */}
+      {/* Booking Rules & Hours */}
       <PricingSection
         id="bookingRules"
         icon={Building2}
@@ -479,6 +541,84 @@ export function PricingBookingRules({ form, venue, onChange, editable }: Pricing
           />
         </div>
       </PricingSection>
+
+      {showSlots && (
+        <PricingSection
+          id="slotPricing"
+          icon={Building2}
+          title="Slot Pricing"
+          open={open.slotPricing}
+          onToggle={toggle}
+          actions={
+            editable ? (
+              <HeaderAction icon={Plus} label="Add Slot" onClick={addTimedSlot} />
+            ) : undefined
+          }
+        >
+          {timedSlots.length === 0 ? (
+            <p className="text-sm text-[#6B7280]">
+              No slots yet. Add Morning, Afternoon, Evening, or any custom slot.
+            </p>
+          ) : (
+            <div className="space-y-2.5">
+              {timedSlots.map((slot) => (
+                <VenueSlotCard
+                  key={slot.id}
+                  slot={slot}
+                  editable={editable}
+                  allNames={timedSlots.map((s) => s.name)}
+                  opStart={opStart}
+                  opEnd={opEnd}
+                  onChange={(patch) => updateSlot(slot.id, patch)}
+                  onDelete={() => removeTimedSlot(slot.id)}
+                />
+              ))}
+            </div>
+          )}
+          <div className="mt-3">{advanceGstFields}</div>
+        </PricingSection>
+      )}
+
+      {/* ========== VENUE + FOOD — Food Slots only (no pricing model) ========== */}
+      {showFoodSlots && (
+        <PricingSection
+          id="foodSlots"
+          icon={UtensilsCrossed}
+          title="Food Slots"
+          open={open.foodSlots}
+          onToggle={toggle}
+          actions={
+            editable ? (
+              <HeaderAction icon={Plus} label="Add Food Slot" onClick={addFoodSlot} />
+            ) : undefined
+          }
+        >
+          {foodSlots.length === 0 ? (
+            <p className="text-sm text-[#6B7280]">
+              No meal slots yet. Add Breakfast, Lunch, Dinner, or any custom meal.
+            </p>
+          ) : (
+            <div className="space-y-2.5">
+              {foodSlots.map((slot) => (
+                <FoodSlotCard
+                  key={slot.id}
+                  slot={slot}
+                  editable={editable}
+                  allNames={foodSlots.map((s) => s.name)}
+                  opStart={opStart}
+                  opEnd={opEnd}
+                  onChange={(patch) => updateFoodSlot(slot.id, patch)}
+                  onDelete={() => removeFoodSlot(slot.id)}
+                />
+              ))}
+            </div>
+          )}
+          <div className="mt-3">{advanceGstFields}</div>
+          <p className="mt-2.5 text-[12px] text-[#6B7280]">
+            Per-plate price includes venue cost. Booking amount = plate price × guest count.
+          </p>
+        </PricingSection>
+      )}
 
       {/* Preview */}
       <PricingSection
@@ -536,60 +676,23 @@ export function PricingBookingRules({ form, venue, onChange, editable }: Pricing
                   />
                   <PreviewRow
                     label="Plate Price (Veg)"
-                    value={formatCurrency(platePrice)}
+                    value={formatCurrency(Number(plateSource.veg || 0))}
                   />
                   <PreviewRow
-                    label="Guests"
-                    value={String(effectivePreviewGuests)}
+                    label="Plate Price (Non-Veg)"
+                    value={formatCurrency(Number(plateSource.nonVeg || 0))}
                   />
-                </div>
-
-                <div className="border-t border-[#E5E7EB]" />
-
-                <div className="py-3 space-y-2.5">
-                  <PreviewRow label="Food Amount" value={formatCurrency(foodTotal)} />
-                  {gstPct > 0 && (
-                    <PreviewRow
-                      label={`GST (${gstPct}%)`}
-                      value={formatCurrency(gstExtra)}
-                    />
-                  )}
-                </div>
-
-                <div className="border-t border-[#E5E7EB]" />
-
-                <div className="py-3">
                   <PreviewRow
-                    label="Total Booking Amount"
-                    value={formatCurrency(bookingTotal)}
-                    emphasize
+                    label="GST"
+                    value={`${gstPct}%`}
                   />
-                </div>
-
-                <div className="border-t border-[#E5E7EB]" />
-
-                <div className="py-3">
                   <PreviewRow
-                    label={`Advance Booking (${advancePercentNum || 0}%)`}
-                    value={formatCurrency(advancePayable)}
+                    label="Advance Booking"
+                    value={`${advancePercentNum || 0}%`}
                     accent
                   />
                 </div>
-
-                <div className="border-t border-[#E5E7EB]" />
-
-                <div className="pt-3">
-                  <PreviewRow
-                    label="Remaining Balance"
-                    value={formatCurrency(remainingBalance)}
-                    strong
-                  />
-                </div>
               </div>
-              <p className="text-[11px] text-[#6B7280] max-w-sm leading-relaxed">
-                Customer pays only the advance amount online. The remaining balance is
-                collected directly by the venue during the event.
-              </p>
             </>
           ) : (
             <>
@@ -653,18 +756,24 @@ function VenueSlotCard({
   slot,
   editable,
   allNames,
+  opStart,
+  opEnd,
   onChange,
   onDelete,
 }: {
   slot: PricingSlot;
   editable: boolean;
   allNames: string[];
+  opStart?: string;
+  opEnd?: string;
   onChange: (patch: Partial<PricingSlot>) => void;
   onDelete: () => void;
 }) {
   const { start, end } = parseTimeLabel(slot.timeLabel || "09:00 - 13:00");
   const duplicate = isDuplicateName(slot.name, allNames);
   const timeError = !isEndAfterStart(start, end);
+  const startBeforeOp = editable && opStart ? start < opStart : false;
+  const endAfterOp = editable && opEnd ? end > opEnd : false;
   const priceError = editable && Number(slot.price) <= 0;
 
   const setTimes = (which: "start" | "end", next: string) => {
@@ -709,7 +818,7 @@ function VenueSlotCard({
             {editable ? (
               <input
                 type="time"
-                className={timeCls}
+                className={`${timeCls} ${startBeforeOp ? "border-red-500 bg-red-50/50" : ""}`}
                 value={start}
                 onChange={(e) => setTimes("start", e.target.value)}
               />
@@ -718,13 +827,18 @@ function VenueSlotCard({
                 {formatDisplayTime(start)}
               </div>
             )}
+            {startBeforeOp && (
+              <p className="mt-1 text-[11px] text-red-500 font-medium">
+                Start time cannot be earlier than venue opening ({formatDisplayTime(opStart!)})
+              </p>
+            )}
           </div>
           <div>
             <p className={labelCls}>End Time</p>
             {editable ? (
               <input
                 type="time"
-                className={timeCls}
+                className={`${timeCls} ${endAfterOp ? "border-red-500 bg-red-50/50" : ""}`}
                 value={end}
                 onChange={(e) => setTimes("end", e.target.value)}
               />
@@ -734,7 +848,12 @@ function VenueSlotCard({
               </div>
             )}
             {timeError && (
-              <p className="mt-1 text-[11px] text-red-500">End time must be after start time</p>
+              <p className="mt-1 text-[11px] text-red-500 font-medium">End time must be after start time</p>
+            )}
+            {endAfterOp && (
+              <p className="mt-1 text-[11px] text-red-500 font-medium">
+                End time cannot exceed venue closing ({formatDisplayTime(opEnd!)})
+              </p>
             )}
           </div>
         </div>
@@ -757,18 +876,24 @@ function FoodSlotCard({
   slot,
   editable,
   allNames,
+  opStart,
+  opEnd,
   onChange,
   onDelete,
 }: {
   slot: FoodSlot;
   editable: boolean;
   allNames: string[];
+  opStart?: string;
+  opEnd?: string;
   onChange: (patch: Partial<FoodSlot>) => void;
   onDelete: () => void;
 }) {
   const { start, end } = parseTimeLabel(slot.timeLabel || "12:00 - 15:00");
   const duplicate = isDuplicateName(slot.name, allNames);
   const timeError = !isEndAfterStart(start, end);
+  const startBeforeOp = editable && opStart ? start < opStart : false;
+  const endAfterOp = editable && opEnd ? end > opEnd : false;
   const guestError =
     Number(slot.minGuests) > 0 &&
     Number(slot.maxGuests) > 0 &&
@@ -809,7 +934,7 @@ function FoodSlotCard({
             {editable ? (
               <input
                 type="time"
-                className={timeCls}
+                className={`${timeCls} ${startBeforeOp ? "border-red-500 bg-red-50/50" : ""}`}
                 value={start}
                 onChange={(e) => setTimes("start", e.target.value)}
               />
@@ -818,13 +943,18 @@ function FoodSlotCard({
                 {formatDisplayTime(start)}
               </div>
             )}
+            {startBeforeOp && (
+              <p className="mt-1 text-[11px] text-red-500 font-medium">
+                Start time cannot be earlier than venue opening ({formatDisplayTime(opStart!)})
+              </p>
+            )}
           </div>
           <div>
             <p className={labelCls}>End Time</p>
             {editable ? (
               <input
                 type="time"
-                className={timeCls}
+                className={`${timeCls} ${endAfterOp ? "border-red-500 bg-red-50/50" : ""}`}
                 value={end}
                 onChange={(e) => setTimes("end", e.target.value)}
               />
@@ -834,7 +964,12 @@ function FoodSlotCard({
               </div>
             )}
             {timeError && (
-              <p className="mt-1 text-[11px] text-red-500">End time must be after start time</p>
+              <p className="mt-1 text-[11px] text-red-500 font-medium">End time must be after start time</p>
+            )}
+            {endAfterOp && (
+              <p className="mt-1 text-[11px] text-red-500 font-medium">
+                End time cannot exceed venue closing ({formatDisplayTime(opEnd!)})
+              </p>
             )}
           </div>
           <Field

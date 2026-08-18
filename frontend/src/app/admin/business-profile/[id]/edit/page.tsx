@@ -144,6 +144,13 @@ export default function EditBusinessProfilePage() {
       notify.validation("Please enter a valid IFSC code (e.g. HDFC0001234).");
       return;
     }
+    const invalidBank = (form.bankAccounts || []).find(
+      (b) => b.ifscCode.trim() && !isValidIfsc(b.ifscCode)
+    );
+    if (invalidBank) {
+      notify.validation("Please enter a valid IFSC code for all bank accounts.");
+      return;
+    }
     setSaving(true);
     try {
       const result = await updateBusinessProfile(business.id, formToUpdatePayload(form));
@@ -187,6 +194,7 @@ export default function EditBusinessProfilePage() {
     bankProofFileName: form.bankProofFileName,
     bankProofFileSize: form.bankProofFileSize,
     bankProofUploadedDate: form.bankProofUploadedDate,
+    bankAccounts: form.bankAccounts,
     notes: form.notes,
     status: form.status,
     verification: form.verification,

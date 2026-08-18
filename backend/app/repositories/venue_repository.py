@@ -107,7 +107,7 @@ class VenueRepository:
         return {row[0]: int(row[1]) for row in result.all()}
 
     async def list_by_venue_owner(
-        self, venue_owner_id: uuid.UUID, *, limit: int = 20
+        self, venue_owner_id: uuid.UUID, *, limit: int = 50
     ) -> list[Venue]:
         result = await self.db.execute(
             select(Venue)

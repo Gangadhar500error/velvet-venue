@@ -4,6 +4,7 @@ import { useMemo, useRef, useState } from "react";
 import { CheckCircle2, Download, Eye, FileText, Upload } from "lucide-react";
 import { VenueDocument, DocumentStatus } from "../types";
 import { formatDate } from "../data";
+import { resolveMediaUrl } from "@/lib/api";
 
 interface DocumentsManagerProps {
   documents: VenueDocument[];
@@ -42,6 +43,7 @@ export function DocumentsManager({ documents, onChange, mode = "edit" }: Documen
     if (!file) return;
     const expiry = new Date();
     expiry.setFullYear(expiry.getFullYear() + 1);
+    const objectUrl = URL.createObjectURL(file);
     updateDoc(doc.id, {
       status: "uploaded",
       fileName: file.name,
@@ -49,6 +51,7 @@ export function DocumentsManager({ documents, onChange, mode = "edit" }: Documen
       uploadedDate: todayISO(),
       verifiedBy: "—",
       expiryDate: expiry.toISOString().slice(0, 10),
+      fileUrl: objectUrl,
     });
   };
 
@@ -241,11 +244,42 @@ function DocumentTableRow({
       <td className="py-3">
         {hasFile ? (
           <div className="flex flex-wrap items-center gap-1.5">
-            <ActionBtn icon={Eye} label="View" onClick={() => window.alert(`Viewing ${doc.fileName}`)} />
+            <ActionBtn
+              icon={Eye}
+              label="View"
+              onClick={() => {
+                if (doc.fileUrl) {
+                  window.open(resolveMediaUrl(doc.fileUrl), "_blank");
+                } else {
+                  const blob = new Blob(
+                    [`Document details for ${doc.name}\nFile: ${doc.fileName || "document.pdf"}`],
+                    { type: "application/pdf" }
+                  );
+                  const url = URL.createObjectURL(blob);
+                  window.open(url, "_blank");
+                }
+              }}
+            />
             <ActionBtn
               icon={Download}
               label="Download"
-              onClick={() => window.alert(`Downloading ${doc.fileName}`)}
+              onClick={() => {
+                const targetUrl = doc.fileUrl
+                  ? resolveMediaUrl(doc.fileUrl)
+                  : URL.createObjectURL(
+                      new Blob(
+                        [`Document file content for ${doc.name}\nFile: ${doc.fileName || "document.pdf"}`],
+                        { type: "application/pdf" }
+                      )
+                    );
+                const link = document.createElement("a");
+                link.href = targetUrl;
+                link.download = doc.fileName || `${doc.name.toLowerCase().replace(/\s+/g, "_")}.pdf`;
+                link.target = "_blank";
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+              }}
             />
             {canManage && (
               <ActionBtn
